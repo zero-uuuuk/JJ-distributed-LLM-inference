@@ -1,0 +1,12 @@
+{
+  "model_name": "facebook/opt-125m",
+  "max_new_tokens": 512,
+  "system_prompt_length": 1500,
+  "migration_port": 10051,
+  "random_seed": 42,
+  "spot_interruption_time_sec": 20,
+  "migration_timeout_sec": 30,
+  "grace_period_sec": 3,
+  "simulated_bandwidth_gbps": 1.0,
+  "tcp_handshake_overhead_sec": 0.05
+}
