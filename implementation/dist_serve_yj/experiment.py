@@ -37,7 +37,7 @@ from measure import GPUMonitor, summarize
 # ---------------------------------------------------------------------------
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
-MODEL_NAME = "facebook/opt-6.7b"
+MODEL_NAME = "facebook/opt-1.3b"
 SEED = 42
 WARMUP_ITERS = 3
 VOCAB_SIZE = 50272  # OPT-6.7B vocabulary size

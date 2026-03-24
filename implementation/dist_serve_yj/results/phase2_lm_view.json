@@ -1,0 +1,211 @@
+[
+  {
+    "batch_size": 1,
+    "by_seq_len": [
+      {
+        "seq_len": 128,
+        "throughput_tokens_per_sec": 1127.3269484161974,
+        "mean_latency_sec": 0.11354292575000499,
+        "std_latency_sec": 0.002771799479408148,
+        "gpu_util_mean_pct": 23,
+        "gpu_util_max_pct": 23,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 256,
+        "throughput_tokens_per_sec": 2184.419176868426,
+        "mean_latency_sec": 0.11719362415001341,
+        "std_latency_sec": 0.005341379238516456,
+        "gpu_util_mean_pct": 33.2,
+        "gpu_util_max_pct": 34,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 512,
+        "throughput_tokens_per_sec": 3919.082973989079,
+        "mean_latency_sec": 0.1306428068500054,
+        "std_latency_sec": 0.002308709302721646,
+        "gpu_util_mean_pct": 52.2,
+        "gpu_util_max_pct": 53,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1024,
+        "throughput_tokens_per_sec": 5863.844671108261,
+        "mean_latency_sec": 0.17462945515002276,
+        "std_latency_sec": 0.002618347748020446,
+        "gpu_util_mean_pct": 72.14285714285714,
+        "gpu_util_max_pct": 73,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1536,
+        "throughput_tokens_per_sec": 6377.431187782031,
+        "mean_latency_sec": 0.24084932550000532,
+        "std_latency_sec": 0.0019651053863700427,
+        "gpu_util_mean_pct": 80.2,
+        "gpu_util_max_pct": 81,
+        "gpu_mem_max_mb": 3053
+      }
+    ]
+  },
+  {
+    "batch_size": 2,
+    "by_seq_len": [
+      {
+        "seq_len": 128,
+        "throughput_tokens_per_sec": 2185.208032337803,
+        "mean_latency_sec": 0.11715131750002002,
+        "std_latency_sec": 0.00299473181385372,
+        "gpu_util_mean_pct": 32.6,
+        "gpu_util_max_pct": 33,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 256,
+        "throughput_tokens_per_sec": 3935.7438619111454,
+        "mean_latency_sec": 0.13008976650004342,
+        "std_latency_sec": 0.0025038460231575797,
+        "gpu_util_mean_pct": 52,
+        "gpu_util_max_pct": 53,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 512,
+        "throughput_tokens_per_sec": 6023.15293636111,
+        "mean_latency_sec": 0.17001062580002327,
+        "std_latency_sec": 0.003096449077215521,
+        "gpu_util_mean_pct": 72.57142857142857,
+        "gpu_util_max_pct": 73,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1024,
+        "throughput_tokens_per_sec": 6977.105352898116,
+        "mean_latency_sec": 0.29353147134997926,
+        "std_latency_sec": 0.0014781642281585065,
+        "gpu_util_mean_pct": 84.33333333333333,
+        "gpu_util_max_pct": 85,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1536,
+        "throughput_tokens_per_sec": 7131.765386305321,
+        "mean_latency_sec": 0.4307488866499966,
+        "std_latency_sec": 0.0021860328948991397,
+        "gpu_util_mean_pct": 89.82352941176471,
+        "gpu_util_max_pct": 91,
+        "gpu_mem_max_mb": 3053
+      }
+    ]
+  },
+  {
+    "batch_size": 4,
+    "by_seq_len": [
+      {
+        "seq_len": 128,
+        "throughput_tokens_per_sec": 3977.269106940652,
+        "mean_latency_sec": 0.1287315457499517,
+        "std_latency_sec": 0.0021554681936662478,
+        "gpu_util_mean_pct": 52.2,
+        "gpu_util_max_pct": 53,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 256,
+        "throughput_tokens_per_sec": 6091.002711064564,
+        "mean_latency_sec": 0.1681168189499999,
+        "std_latency_sec": 0.0034381095507458833,
+        "gpu_util_mean_pct": 72.57142857142857,
+        "gpu_util_max_pct": 73,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 512,
+        "throughput_tokens_per_sec": 7115.54076871833,
+        "mean_latency_sec": 0.2878207105499996,
+        "std_latency_sec": 0.0017088383480480382,
+        "gpu_util_mean_pct": 84.27272727272727,
+        "gpu_util_max_pct": 85,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1024,
+        "throughput_tokens_per_sec": 7511.292794332386,
+        "mean_latency_sec": 0.5453122534499812,
+        "std_latency_sec": 0.002582113180722414,
+        "gpu_util_mean_pct": 92.28571428571429,
+        "gpu_util_max_pct": 94,
+        "gpu_mem_max_mb": 3053
+      },
+      {
+        "seq_len": 1536,
+        "throughput_tokens_per_sec": 7395.069700434827,
+        "mean_latency_sec": 0.8308238122000035,
+        "std_latency_sec": 0.002598590208582557,
+        "gpu_util_mean_pct": 95.28125,
+        "gpu_util_max_pct": 97,
+        "gpu_mem_max_mb": 3643
+      }
+    ]
+  },
+  {
+    "batch_size": 8,
+    "by_seq_len": [
+      {
+        "seq_len": 128,
+        "throughput_tokens_per_sec": 6062.77900495177,
+        "mean_latency_sec": 0.16889944350002678,
+        "std_latency_sec": 0.0027247651462747693,
+        "gpu_util_mean_pct": 71.57142857142857,
+        "gpu_util_max_pct": 73,
+        "gpu_mem_max_mb": 3643
+      },
+      {
+        "seq_len": 256,
+        "throughput_tokens_per_sec": 7149.8891843020665,
+        "mean_latency_sec": 0.2864380058500046,
+        "std_latency_sec": 0.0018984718994636185,
+        "gpu_util_mean_pct": 84.18181818181819,
+        "gpu_util_max_pct": 85,
+        "gpu_mem_max_mb": 3643
+      },
+      {
+        "seq_len": 512,
+        "throughput_tokens_per_sec": 7683.395353392957,
+        "mean_latency_sec": 0.5330976491000456,
+        "std_latency_sec": 0.0021883469264722634,
+        "gpu_util_mean_pct": 91.85714285714286,
+        "gpu_util_max_pct": 93,
+        "gpu_mem_max_mb": 3643
+      },
+      {
+        "seq_len": 1024,
+        "throughput_tokens_per_sec": 7687.176169451822,
+        "mean_latency_sec": 1.0656709069000272,
+        "std_latency_sec": 0.003117601269326572,
+        "gpu_util_mean_pct": 96.41463414634147,
+        "gpu_util_max_pct": 97,
+        "gpu_mem_max_mb": 4429
+      },
+      {
+        "seq_len": 1536,
+        "throughput_tokens_per_sec": 7497.482510890432,
+        "mean_latency_sec": 1.6389501385499898,
+        "std_latency_sec": 0.003892497045692819,
+        "gpu_util_mean_pct": 98.04838709677419,
+        "gpu_util_max_pct": 99,
+        "gpu_mem_max_mb": 5609
+      },
+      {
+        "seq_len": 2048,
+        "throughput_tokens_per_sec": 7280.536531400557,
+        "mean_latency_sec": 2.2503835987,
+        "std_latency_sec": 0.004850366564691808,
+        "gpu_util_mean_pct": 98.6,
+        "gpu_util_max_pct": 100,
+        "gpu_mem_max_mb": 7181
+      }
+    ]
+  }
+]

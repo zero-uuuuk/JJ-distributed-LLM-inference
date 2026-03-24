@@ -8,7 +8,7 @@ OPT-6.7B 모델 로딩 및 prefill forward pass 래퍼.
 
 import time
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
 
 class PrefillEngine:
@@ -25,11 +25,13 @@ class PrefillEngine:
             load_in_8bit: True면 bitsandbytes 8-bit 양자화 적용.
         """
         print(f"[engine] 모델 로딩 중: {model_name} (8-bit={load_in_8bit})")
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True) if load_in_8bit else None
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            load_in_8bit=load_in_8bit,
+            quantization_config=quantization_config,
             device_map="auto",           # GPU 자동 배치
-            torch_dtype=torch.float16,   # 8-bit 로더와 혼용 가능
+            dtype=torch.float16,         # 8-bit 로더와 혼용 가능
+            use_safetensors=True,        # torch.load CVE-2025-32434 우회
         )
         self.model.eval()
         print("[engine] 모델 로딩 완료")
