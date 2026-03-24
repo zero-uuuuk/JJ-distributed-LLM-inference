@@ -14,7 +14,7 @@ Prefill Compute-Bound 탐색 실험 (`dist_serve_yj`) 을 AWS에서 수행하기
 | **vCPU** | 4 |
 | **RAM** | 16GB |
 | **스토리지** | 50GB gp3 EBS (모델 체크포인트 + 실험 결과 저장) |
-| **리전** | `ap-northeast-2` (서울) 또는 Spot 가용성 높은 리전 |
+| **리전** | `us-east-2` (오하이오) |
 
 > **Spot Instance 선택 이유**
 > 현재 계정 Quota: `G / VT Spot Instance vCPU per Region = 8`
@@ -161,7 +161,7 @@ curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
 ## 10. 실행 체크리스트
 
 ```
-[ ] g4dn.xlarge Spot 요청 생성 (ap-northeast-2 또는 us-east-1)
+[ ] g4dn.xlarge Spot 요청 생성 (us-east-2)
 [ ] 보안 그룹: SSH(22) 인바운드만 허용
 [ ] EBS 50GB gp3 연결
 [ ] Deep Learning Base AMI (Ubuntu 22.04) 선택
