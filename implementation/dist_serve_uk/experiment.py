@@ -28,7 +28,7 @@ from measure import IterTimer, summarize
 # -----------------------------------------------------------------------
 # 실험 파라미터
 # -----------------------------------------------------------------------
-MODEL_NAME = "facebook/opt-6.7b"
+MODEL_NAME = "facebook/opt-1.3b"
 DEVICE = "cuda"
 SEED = 42
 
