@@ -2,9 +2,6 @@
 
 Prefill과 Decode를 분리하여 KV Cache를 전송하는 벤치마크 도구 모음.
 
-> [!NOTE]
-> 자세한 코드는 [https://github.com/zero-uuuuk/vllm.git](https://github.com/zero-uuuuk/vllm.git) 의 `vllm/benchmarks/disagg_benchmarks`에 있음.
-
 ## 구성 파일
 
 | 파일 | 설명 |
@@ -29,6 +26,7 @@ Prefill과 Decode를 분리하여 KV Cache를 전송하는 벤치마크 도구 �
 ```bash
 export PREFILL_IP="10.0.x.1"  # 본인 IP
 export DECODE_IP="10.0.x.2"   # Decode 노드 IP
+export KV_GRANULARITY=1        # 1, 8, 32 중 선택
 ./benchmarks/disagg_benchmarks/prefill_node_setup.sh
 ```
 
@@ -38,6 +36,7 @@ export DECODE_IP="10.0.x.2"   # Decode 노드 IP
 
 ```bash
 export PREFILL_IP="10.0.x.1"  # Prefill(Master) 노드의 Private IP
+export KV_GRANULARITY=1        # Prefill과 동일한 값
 ./benchmarks/disagg_benchmarks/decode_node_setup.sh
 ```
 
@@ -61,15 +60,13 @@ Prefill 노드(Master)에서 실행. Ray Head 기동 → Decode 노드 대기 �
 |------|--------|------|
 | `PREFILL_IP` | `127.0.0.1` | 이 노드의 Private IP |
 | `DECODE_IP` | `127.0.0.1` | Decode 노드의 Private IP |
+| `KV_GRANULARITY` | `1` | KV Cache 전송 granularity (1, 8, 32). 몇 개 레이어를 묶어서 한 번에 전송할지 결정 |
 
 #### 실행 흐름
 
 **1. 의존성 설치**
 
-`quart`, `aiohttp`, `ray` 등은 vLLM 기본 설치에 포함되지 않고, `jq`는 벤치마크 루프의 JSON 파싱에 필요함. 스크립트 상단에서 자동으로 설치함.
-
-> [!WARNING]
-> `jq` 설치에 실패하면 saturation 판정이 동작하지 않아 모든 lambda를 소진함. sudo 권한이 없는 환경이라면 수동으로 미리 설치할 것.
+`quart`, `aiohttp`, `ray` 등은 vLLM 기본 설치에 포함되지 않음. 스크립트 상단에서 자동으로 설치함.
 
 **2. Cleanup trap**
 
@@ -104,7 +101,7 @@ done
 
 주요 옵션:
 - `--no-enable-chunked-prefill`: chunked prefill이 활성화되면 KV 전송이 마지막 chunk 완료 후에야 시작됨. 비활성화하면 프롬프트 전체를 한 번에 처리하므로 KV 전송이 즉시 시작되고 동작이 단순해짐.
-- `--gpu-memory-utilization 0.7`: `recv_store` 버퍼는 vLLM 메모리 계산 밖에서 런타임에 동적으로 GPU 메모리를 추가 점유함. 0.8로 설정하면 vLLM이 80%를 점유한 상태에서 recv_store 버퍼 1GB가 추가로 올라오면서 OOM이 발생함. 0.7로 낮춰 여유 공간을 확보함.
+- `--gpu-memory-utilization 0.7`: `recv_store` 버퍼는 vLLM 메모리 계산 밖에서 런타임에 동적으로 GPU 메모리를 추가 점유함. 0.8로 설정하면 vLLM이 80%를 점유한 상태에서 recv_store 버퍼 1.5GB가 추가로 올라오면서 OOM이 발생함. 0.7로 낮춰 여유 공간을 확보함.
 - `mem_pool_size_gb: 8`: `recv_store` 누적 크기가 `kv_buffer_size`를 초과하면 GPU 대신 CPU 메모리 풀로 fallback함. 기능은 정상 동작하지만 CPU↔GPU 복사 오버헤드가 발생함. 이 값은 fallback 풀의 최대 크기.
 
 서버 준비 확인은 `curl http://localhost:8100/v1/completions`로 폴링함. Decode 서버(`DECODE_IP:8200`)도 동일하게 폴링하여 양쪽이 모두 준비된 후 진행함.
@@ -135,12 +132,14 @@ Prefill 서버와 Decode 서버는 각각 독립적인 vLLM 인스턴스로, 서
 
 **7. 벤치마크 루프**
 
-두 workload case에 대해 lambda 후보를 순회하며 `vllm bench serve`를 실행함. 요청 수는 500으로 고정 (lambda=2 기준 약 4분 10초 소요).
+두 workload case에 대해 `vllm bench serve`를 실행함. lambda=2, 요청 수 500 고정.
 
 | Workload | Input tokens | Output tokens |
 |----------|-------------|---------------|
 | case1 | 512 | 128 |
 | case2 | 128 | 512 |
+
+결과 파일명에 granularity가 포함됨: `case1_g1.json`, `case1_g8.json` 등.
 
 ---
 
@@ -153,6 +152,7 @@ Decode 노드(Worker)에서 실행. Ray Worker join → vLLM Decode 서비스 �
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `PREFILL_IP` | `127.0.0.1` | Prefill(Master) 노드의 Private IP |
+| `KV_GRANULARITY` | `1` | KV Cache 전송 granularity. Prefill 노드와 동일한 값을 설정해야 함 |
 
 #### 실행 흐름
 
