@@ -40,16 +40,16 @@ su - ubuntu -c '
 
     # Git Clone (1)
     # 이미 폴더가 있으면 에러가 날 수 있으니 체크
-    if [ ! -d "JJ-distributed-LLM-inference" ]; then
-        echo ">>> Cloning JJ-distributed-LLM-inference..."
-        git clone https://<your_github_token>@github.com/zero-uuuuk/JJ-distributed-LLM-inference
-        echo ">>> [SUCCESS] JJ-distributed-LLM-inference cloned."
+    if [ ! -d "CCD-research" ]; then
+        echo ">>> Cloning CCD-research..."
+        git clone https://github.com/yvz1225/CCD-research.git
+        echo ">>> [SUCCESS] CCD-research cloned."
     fi
 
     # Git Clone (2)
     if [ ! -d "vllm" ]; then
         echo ">>> Cloning vllm..."
-        git clone https://<your_github_token>@github.com/zero-uuuuk/vllm
+        git clone https://github.com/zero-uuuuk/vllm
         echo ">>> [SUCCESS] vllm cloned."
     fi
     
