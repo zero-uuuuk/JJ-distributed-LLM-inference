@@ -1,0 +1,17 @@
+# 비동기 HTTP client (OpenAI 호환 API 요청 및 스트리밍 처리)
+aiohttp==3.13.5
+
+# 데이터셋 로드 및 Hugging Face Hub 연동
+datasets==4.8.5
+huggingface-hub==1.14.0
+
+# 수치 계산, 진행률 표시, 분석/시각화 보조
+matplotlib==3.10.9
+numpy==2.4.4
+tqdm==4.67.1
+
+# benchmark proxy 서버 계열 도구와 호환되는 런타임
+fastapi==0.136.1
+uvicorn==0.46.0
+uvloop==0.22.1
+
