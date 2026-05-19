@@ -272,7 +272,7 @@ python run_trace.py \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag chat \
   --qps 10.0 \
-  --max-concurrency 16 \
+  --max-concurrency 64 \
   --num-prompts 500 \
   --slo-ms 500 \
   --output results/chat_isolated_apc_on_len8192.jsonl
@@ -302,7 +302,7 @@ python run_trace.py \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag rag \
   --qps 10.0 \
-  --max-concurrency 16 \
+  --max-concurrency 64 \
   --num-prompts 500 \
   --slo-ms 2000 \
   --output results/rag_isolated_apc_on_len8192.jsonl

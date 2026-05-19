@@ -198,9 +198,10 @@ def build_workload_rows(
             )
         )
 
-    # context 기준으로 정렬해 같은(또는 유사한) 문서를 공유하는 요청이 연속으로 오게 한다.
-    # 인접 요청 간 prefix cache locality를 높여 vLLM 등 KV cache 재사용 효과를 극대화한다.
-    workload_rows.sort(key=lambda item: item["prompt"][: item["context_char_len"]])
+    # context 텍스트 기준으로 정렬해 같은(또는 유사한) 문서를 공유하는 요청이 연속으로 오게 한다.
+    # vLLM prefix cache는 position 0부터 exact match이므로, 앞쪽 청크가 같은 요청이 연속으로
+    # 오면 공유 prefix 길이만큼 KV cache hit가 발생한다.
+    workload_rows.sort(key=lambda item: item["context_titles"])
     return workload_rows
 
 
