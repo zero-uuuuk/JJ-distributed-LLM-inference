@@ -139,13 +139,16 @@ def prompt_from_row(row: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def build_payload(row: dict[str, Any], model: str, max_tokens: int, api: str) -> dict[str, Any]:
+def build_payload(
+    row: dict[str, Any], model: str, max_tokens: int, api: str, workload_tag: str = ""
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "temperature": 0.0,
         "stream": True,
         "stream_options": {"include_usage": True},
+        "user": workload_tag,  # vLLM 내부 block workload 태그 전달 — eviction attribution 계측용
     }
     if api == "chat":
         payload["messages"] = messages_from_row(row)
@@ -180,7 +183,7 @@ async def send_one(
     workload_tag: str,
 ) -> dict[str, Any]:
     actual_max_tokens = resolve_max_tokens(row, cli_max_tokens)
-    payload = build_payload(row, model, actual_max_tokens, api)
+    payload = build_payload(row, model, actual_max_tokens, api, workload_tag)
 
     async with semaphore:
         start_perf = time.perf_counter()

@@ -1,3 +1,12 @@
+"""역할: Chat(ShareGPT)과 RAG(HotpotQA) 두 워크로드를 동시에 vLLM 서버로 전송해
+       prefix KV cache pollution 현상을 측정한다.
+
+상세 과정:
+  1. 두 워크로드 각각 독립적인 Poisson 도착 과정으로 공유 큐에 요청을 투입한다.
+  2. 소비자 코루틴 풀이 큐에서 요청을 꺼내 vLLM OpenAI 호환 API로 전송한다.
+  3. 각 요청의 TTFT·캐시 hit rate를 기록하고, SLO attainment를 집계한다.
+  4. vLLM 내부 eviction 계측을 위해 OpenAI 'user' 필드로 workload 태그를 전달한다.
+"""
 from __future__ import annotations
 
 import argparse
@@ -113,14 +122,24 @@ def messages_from_row(row: dict[str, Any]) -> list[dict[str, str]]:
     raise ValueError("row에는 messages 또는 prompt 필드가 필요합니다.")
 
 
-def build_payload(row: dict[str, Any], model: str, max_tokens: int) -> dict[str, Any]:
+def build_payload(row: dict[str, Any], model: str, max_tokens: int,
+                  workload_tag: str = "") -> dict[str, Any]:
+    """OpenAI Chat Completions 요청 페이로드를 생성한다.
+
+    vLLM 내부 eviction 계측을 위해 'user' 필드에 workload 태그를 포함한다.
+    vLLM은 이 값을 ChatCompletionRequest.user로 파싱하며,
+    계측 패치 적용 시 Request.workload_tag로 전파된다.
+    """
     return {
         "model": model,
         "max_tokens": max_tokens,
         "temperature": 0.0,
         "stream": True,
+        # 스트림 종료 시점에 usage 정보(캐시 hit 토큰 수 포함)를 수신한다.
         "stream_options": {"include_usage": True},
         "messages": messages_from_row(row),
+        # vLLM 내부 block workload 태그 전달 — eviction attribution 계측용
+        "user": workload_tag,
     }
 
 
@@ -146,7 +165,8 @@ async def send_one(
     workload_tag: str,
 ) -> dict[str, Any]:
     actual_max_tokens = resolve_max_tokens(row, cli_max_tokens)
-    payload = build_payload(row, model, actual_max_tokens)
+    # workload_tag를 페이로드에 포함해 vLLM 내부 eviction 계측 경로로 전달한다.
+    payload = build_payload(row, model, actual_max_tokens, workload_tag=workload_tag)
 
     async with semaphore:
         start_perf = time.perf_counter()
