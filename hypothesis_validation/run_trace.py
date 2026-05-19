@@ -419,7 +419,7 @@ async def main_async(args: argparse.Namespace) -> None:
         duration_seconds = time.perf_counter() - start_perf
 
     write_jsonl(args.output, results)
-    print_summary(results, duration_seconds, args.slo_ms)
+    print_summary(results, duration_seconds, args.slo_ms, args.workload_tag)
     print(f"\n저장 완료: {args.output}")
 
 
