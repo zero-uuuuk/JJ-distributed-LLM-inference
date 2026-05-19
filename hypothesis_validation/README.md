@@ -42,44 +42,184 @@ Case 1·2의 결과와 Case 3을 비교해 cache pollution을 정량화합니다
 
 ## 사용법
 
-vLLM이 `http://localhost:8000`에 서빙 중이라고 가정합니다.
+실험은 보통 두 개 터미널을 사용합니다.
 
-### Case 1 — Chat isolated
+| 터미널 | 역할 |
+|---|---|
+| Terminal 1 | vLLM 서버 실행 |
+| Terminal 2 | workload 전송 (`run_trace.py` / `run_mixed.py`) |
+
+아래 예시는 다음 경로를 가정합니다.
+
+| 항목 | 경로 |
+|---|---|
+| JJ repo | `/home/ubuntu/JJ-Distributed-LLM-Inference` |
+| vLLM repo | `/home/ubuntu/vllm` |
+| vLLM venv | `/home/ubuntu/vllm/.venv` |
+| JJ runner venv | `/home/ubuntu/JJ-Distributed-LLM-Inference/.venv` |
+
+서버는 모든 run에서 `--max-model-len 8192`로 고정합니다.
+
+### 0. 공통 준비
+
+Terminal 2에서 최초 1회 실행합니다.
 
 ```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference
+
+export PATH="$HOME/.local/bin:$PATH"
+
+uv venv --python 3.12
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+
+uv pip install -r requirements.txt
+
+python -c "import aiohttp, numpy, tqdm; print('runner deps ok')"
+```
+
+워크로드가 아직 없으면 생성합니다.
+
+```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+
+python build_rag_workload.py \
+  --dataset-name hotpotqa/hotpot_qa \
+  --subset distractor \
+  --split validation \
+  --num-requests 5000 \
+  --output hotpotqa_distractor_validation.jsonl
+```
+
+```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/sharegpt
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+
+python build_sharegpt_workload.py \
+  --repo-id anon8231489123/ShareGPT_Vicuna_unfiltered \
+  --filename ShareGPT_V3_unfiltered_cleaned_split.json \
+  --repo-type dataset \
+  --num-conversations 5000 \
+  --output sharegpt_conversation.jsonl
+```
+
+생성 확인:
+
+```bash
+ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa/*.jsonl
+ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/sharegpt/*.jsonl
+```
+
+### 1. Chat Isolated
+
+Terminal 1 — 서버:
+
+```bash
+cd /home/ubuntu/vllm
+source /home/ubuntu/vllm/.venv/bin/activate
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
+
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --enable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.96 \
+  --port 8000
+```
+
+Terminal 2 — 클라이언트:
+
+```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+mkdir -p results
+
 python run_trace.py \
   --trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --output results/chat_isolated.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag chat \
   --qps 5.0 \
-  --num-prompts 500
+  --max-concurrency 16 \
+  --num-prompts 500 \
+  --slo-ms 500 \
+  --output results/chat_isolated_apc_on_len8192.jsonl
 ```
 
-### Case 2 — RAG isolated
+### 2. RAG Isolated
+
+Terminal 1에서 서버를 재시작합니다. cache/queue 상태 초기화를 위해 각 run 사이 서버 재시작을 권장합니다.
+
+Terminal 2:
 
 ```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+mkdir -p results
+
 python run_trace.py \
   --trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
-  --output results/rag_isolated.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag rag \
   --qps 5.0 \
-  --num-prompts 500
+  --max-concurrency 16 \
+  --num-prompts 500 \
+  --slo-ms 2000 \
+  --output results/rag_isolated_apc_on_len8192.jsonl
 ```
 
-### Case 3 — Mixed (Chat + RAG)
+### 3. Mixed 5:5
+
+Terminal 1 — 서버:
 
 ```bash
+cd /home/ubuntu/vllm
+source /home/ubuntu/vllm/.venv/bin/activate
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
+
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --enable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.96 \
+  --port 8000
+```
+
+Terminal 2:
+
+```bash
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
+source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+mkdir -p results
+
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
   --rag-trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
   --rag-qps 5.0 \
-  --output results/mixed.jsonl \
+  --max-concurrency 32 \
   --num-chat-prompts 500 \
-  --num-rag-prompts 500
+  --num-rag-prompts 500 \
+  --chat-slo-ms 500 \
+  --rag-slo-ms 2000 \
+  --output results/mixed_5_5_apc_on_len8192.jsonl
 ```
 
-`--chat-qps` / `--rag-qps` 비율을 조절해 workload mix ratio sweep을 수행할 수 있습니다 (`hypothesis.md` §5.3 참고).
+`--chat-qps` / `--rag-qps` 비율을 조절해 workload mix ratio sweep을 수행할 수 있습니다 (`HYPOTHESIS.md` §5.3 참고).
+
+### 실행 원칙
+
+- 각 run 사이에 vLLM 서버를 재시작해 cache/queue 상태를 초기화합니다.
+- 비교군 사이에서 `num-prompts`, `qps`, `max-concurrency`, `--max-model-len 8192`를 고정합니다.
+- isolated와 mixed 모두 chat completions endpoint를 사용합니다.
+- vLLM 서버는 `/home/ubuntu/vllm/.venv`, JJ runner는 `/home/ubuntu/JJ-Distributed-LLM-Inference/.venv`를 사용합니다.
 
 ---
 
