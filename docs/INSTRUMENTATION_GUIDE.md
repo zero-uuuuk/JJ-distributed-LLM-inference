@@ -271,7 +271,7 @@ python run_trace.py \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag chat \
-  --qps 5.0 \
+  --qps 10.0 \
   --max-concurrency 16 \
   --num-prompts 500 \
   --slo-ms 500 \
@@ -301,7 +301,7 @@ python run_trace.py \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag rag \
-  --qps 5.0 \
+  --qps 10.0 \
   --max-concurrency 16 \
   --num-prompts 500 \
   --slo-ms 2000 \
@@ -347,9 +347,9 @@ python run_mixed.py \
   --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 5.0 \
-  --rag-qps  5.0 \
-  --max-concurrency 32 \
+  --chat-qps 10.0 \
+  --rag-qps  10.0 \
+  --max-concurrency 64 \
   --num-chat-prompts 500 \
   --num-rag-prompts  500 \
   --chat-slo-ms 500 \

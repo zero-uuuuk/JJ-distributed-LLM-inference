@@ -315,7 +315,7 @@ def summarize_workload(
     tpots = [r["tpot"] * 1000 for r in ok if r["tpot"] is not None]
     hit_rates = [r["hit_rate"] for r in ok if r["hit_rate"] is not None]
     total_output = sum((r["completion_tokens"] or 0) for r in ok)
-    slo_attainment = sum(1 for t in ttfts if t <= slo_ms) / len(ttfts)
+    slo_attainment = sum(1 for t in ttfts if t <= slo_ms) / (len(ok) + len(failed))
 
     print(f"\n  [{tag.upper()}]  성공: {len(ok)}  실패: {len(failed)}")
     print(f"  처리량: {len(ok) / duration_seconds:.2f} req/s  {total_output / duration_seconds:.1f} tok/s")

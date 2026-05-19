@@ -338,7 +338,7 @@ def print_summary(
     print(f"  입력 토큰: {total_input}  출력 토큰: {total_output}")
     print(f"  처리량: {len(ok) / duration_seconds:.2f} req/s  {total_output / duration_seconds:.1f} tok/s")
     if slo_ms is not None:
-        slo_attainment = sum(1 for t in ttfts if t <= slo_ms) / len(ttfts)
+        slo_attainment = sum(1 for t in ttfts if t <= slo_ms) / len(results)
         print(f"  SLO attainment (TTFT ≤ {slo_ms:.0f}ms): {slo_attainment:.1%}")
     if hit_rates:
         print(f"  Cache hit rate: mean={np.mean(hit_rates):.3f}  p50={percentile(hit_rates, 50):.3f}")
