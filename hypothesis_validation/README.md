@@ -124,7 +124,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.96 \
+  --gpu-memory-utilization 0.6 \
   --port 8000
 ```
 
@@ -186,7 +186,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.96 \
+  --gpu-memory-utilization 0.6 \
   --port 8000
 ```
 

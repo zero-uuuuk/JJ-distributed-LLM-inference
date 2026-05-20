@@ -254,7 +254,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.96 \
+  --gpu-memory-utilization 0.6 \
   --port 8000
 ```
 
@@ -331,7 +331,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.96 \
+  --gpu-memory-utilization 0.6 \
   --port 8000
 ```
 
@@ -518,5 +518,5 @@ hypothesis_validation/results/
 - [ ] Case 3 실행 전 `VLLM_EVICTION_LOG` **절대 경로**로 설정되어 있는가 (상대 경로는 vLLM 실행 위치에 따라 달라짐)
 - [ ] Case 1, 2의 기준선 결과가 먼저 수집되었는가 (비교 기준 없이 Case 3만 실행하면 pollution 정량화 불가)
 - [ ] 각 run 사이에 vLLM 서버를 재시작했는가 (cache/queue 상태 초기화)
-- [ ] 동일 `--gpu-memory-utilization 0.96`으로 Case 1/2/3를 실행했는가 (조건 통제)
+- [ ] 동일 `--gpu-memory-utilization 0.6`으로 Case 1/2/3를 실행했는가 (조건 통제)
 - [ ] `--num-prompts` 가 충분히 큰가 (권장 ≥ 500 per workload)
