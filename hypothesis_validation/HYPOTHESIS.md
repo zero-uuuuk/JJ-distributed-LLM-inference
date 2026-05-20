@@ -5,7 +5,7 @@
 > 
 > Mixed Workload 환경에서 **workload A**의 prefix KV cache가 shared cache pool을 점유하여 **workload B**의 reusable prefix KV를 eviction시키고, 그 결과 B의 `cache hit rate`, `TTFT`, `SLO goodput`이 isolated 실행 대비 악화되는 현상.
 > 
-- Workload A: **RAG** (HotpotQA)
+- Workload A: **RAG** (SQuAD)
 - Workload B: **Chat** (ShareGPT)
 
 ---
@@ -20,14 +20,13 @@
 - **Prefix 길이**: 평균 ~500–2K tokens 예상
 - **SLO 특성**: latency-sensitive, 짧은 TTFT 요구
 
-### 2.2 RAG workload (HotpotQA)
+### 2.2 RAG workload (SQuAD)
 
-- **데이터셋**: HotpotQA
-- **Prefix 구조**: system prompt + retrieved top-k passages + query
-- **Retrieval 설정**: `top-k = 10`
-- **Reuse pattern**: 같은 document가 여러 query에 등장할 때만 hit
-    - cache hit을 늘리는 방향으로 query 순서 미세 조정 예정
-- **Prefix 길이**: 평균 ~4K tokens 예상
+- **데이터셋**: SQuAD validation
+- **Prefix 구조**: system prompt + context paragraph + query
+- **Retrieval 설정**: SQuAD의 gold context를 이미 검색된 문단으로 사용
+- **Reuse pattern**: 같은 context paragraph에 여러 query가 붙어 높은 prefix reuse 기대
+- **Prefix 길이**: context paragraph 길이에 따라 수백~수천 tokens 예상
 - **SLO 특성**: prefill-heavy, TTFT 허용치 상대적으로 큼
 
 ### 2.3 Arrival pattern

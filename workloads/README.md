@@ -16,7 +16,7 @@ _JSONL trace · Prefix cache analysis · QuotaServe_
 
 | 워크로드 | 디렉터리 | 특징 |
 |---|---|---|
-| HotpotQA | [`hotpotqa/`](hotpotqa/) | RAG 형태의 단일 요청 trace |
+| SQuAD | [`squad/`](squad/) | Context 재사용성이 높은 RAG trace |
 | ShareGPT | [`sharegpt/`](sharegpt/) | Multi-turn 대화 trace |
 
 ---
@@ -31,47 +31,47 @@ uv pip install -r requirements.txt
 
 ---
 
-## HotpotQA
+## SQuAD
 
-HotpotQA `distractor` split을 RAG 형태의 JSONL trace로 변환합니다.
+SQuAD `validation` split을 RAG 형태의 JSONL trace로 변환합니다.
 
-`context` 후보 문서를 이미 검색된 retrieved chunk처럼 프롬프트에 넣고, 질문과 정답 메타데이터를 함께 보존합니다. RAG 요청이 prefix cache와 scheduling 정책에 어떤 부하를 주는지 실험할 수 있습니다.
+동일한 `context`에 여러 `question`이 붙는 SQuAD 구조를 활용해, 같은 문단 prefix가 반복되는 RAG 요청을 생성합니다. RAG 요청의 prefix cache hit와 shared cache 점유가 scheduling 정책에 어떤 부하를 주는지 실험할 수 있습니다.
 
 ```text
-Hugging Face HotpotQA
+Hugging Face SQuAD
         │
         ▼
 build_rag_workload.py
         │
-        ├── context 후보 문서 직렬화
-        ├── RAG prompt 생성
-        └── 정답 · 난이도 · 문서 제목 메타데이터 보존
+        ├── context · question 직렬화
+        ├── system/user messages 생성
+        └── 정답 · context hash 메타데이터 보존
         │
         ▼
-workloads/hotpotqa/*.jsonl
+workloads/squad/*.jsonl
 ```
 
 ### Trace 생성
 
 ```bash
-cd workloads/hotpotqa
+cd workloads/squad
 python build_rag_workload.py \
-  --dataset-name hotpotqa/hotpot_qa \
-  --subset distractor \
+  --dataset-name rajpurkar/squad \
+  --subset plain_text \
   --split validation \
   --num-requests 5000 \
-  --instruction "You are a RAG question-answering assistant. Use only the retrieved chunks to answer the question. If the chunks do not contain enough evidence, say you do not know. Keep the answer concise." \
-  --output hotpotqa_distractor_validation.jsonl
+  --system-prompt "You are a question-answering assistant. Answer the question using only the provided context. If the context does not contain enough evidence, say you do not know. Keep the answer concise." \
+  --output squad_validation.jsonl
 ```
 
-기본 dataset은 `hotpotqa/hotpot_qa`, subset은 `distractor`, split은 `validation`입니다.
+기본 dataset은 `rajpurkar/squad`, subset은 `plain_text`, split은 `validation`입니다.
 
-생성되는 row는 `prompt`를 주요 필드로 사용하고, 분석을 위해 `request_id`, `hotpot_id`, `question`, `answer`, `level`, `type`, `context_titles`, `prompt_char_len` 등을 함께 저장합니다.
+생성되는 row는 Chat Completions용 `messages`를 주요 필드로 사용하고, completions fallback과 디버깅을 위해 `prompt`도 함께 저장합니다. 분석을 위해 `request_id`, `squad_id`, `title`, `question`, `answers`, `answer_starts`, `context_hash`, `context_char_len`, `prompt_char_len` 등을 함께 저장합니다.
 
 > [!NOTE]
 > **Prefix cache 최적화가 적용되어 있습니다.**
-> 1. **청크 순서 정규화** — 각 요청의 retrieved chunk를 title 기준으로 정렬합니다. 동일한 문서 조합이면 항상 같은 context 문자열이 생성되어, 문서 순서가 달랐던 요청 사이에도 prefix cache hit가 발생합니다.
-> 2. **요청 순서 정렬** — 생성된 trace 전체를 context 내용 기준으로 정렬합니다. 같거나 유사한 문서를 공유하는 요청이 연속으로 배치되어 vLLM 등의 KV cache 재사용 효과가 극대화됩니다.
+> 1. **Context 정규화** — context와 question 내부 공백을 정규화해 같은 문단이 항상 같은 prefix 문자열로 직렬화되게 합니다.
+> 2. **요청 순서 정렬** — 생성된 trace 전체를 `(title, context)` 기준으로 정렬합니다. 같은 문단을 공유하는 요청이 연속으로 배치되어 vLLM 등의 KV cache 재사용 효과가 커집니다.
 
 ---
 
@@ -114,5 +114,5 @@ python build_sharegpt_workload.py \
 ---
 
 <div align="center">
-<sub>HotpotQA · ShareGPT · Workloads · JJ Distributed LLM Inference</sub>
+<sub>SQuAD · ShareGPT · Workloads · JJ Distributed LLM Inference</sub>
 </div>

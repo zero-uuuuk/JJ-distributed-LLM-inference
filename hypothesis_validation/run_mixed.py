@@ -1,4 +1,4 @@
-"""역할: Chat(ShareGPT)과 RAG(HotpotQA) 두 워크로드를 동시에 vLLM 서버로 전송해
+"""역할: Chat(ShareGPT)과 RAG(SQuAD) 두 워크로드를 동시에 vLLM 서버로 전송해
        prefix KV cache pollution 현상을 측정한다.
 
 상세 과정:
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         description="Chat + RAG 두 workload를 동시에 전송해 cache pollution을 측정합니다.",
     )
     parser.add_argument("--chat-trace", type=Path, required=True, help="ShareGPT JSONL 경로")
-    parser.add_argument("--rag-trace", type=Path, required=True, help="HotpotQA JSONL 경로")
+    parser.add_argument("--rag-trace", type=Path, required=True, help="RAG JSONL 경로")
     parser.add_argument("--chat-qps", type=float, default=5.0, help="Chat 도착 QPS")
     parser.add_argument("--rag-qps", type=float, default=5.0, help="RAG 도착 QPS")
     parser.add_argument("--output", type=Path, required=True, help="결과 JSONL 저장 경로")
