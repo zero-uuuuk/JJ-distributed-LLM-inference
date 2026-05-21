@@ -3,7 +3,7 @@
 상세 과정:
   1. Hugging Face Hub에서 ShareGPT 원시 JSON 경로를 확보한다.
   2. human/gpt가 교대하는 clean 대화만 고른다.
-  3. 각 대화를 turn 단위 요청으로 펼쳐 JSONL trace로 저장한다.
+  3. 각 대화를 turn 단위 요청으로 펼친 뒤 turn 번호 기준으로 JSONL trace를 저장한다.
 """
 
 from __future__ import annotations
@@ -168,10 +168,16 @@ def build_requests(conversation_row: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_all_requests(clean_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """clean 대화 목록을 하나의 요청 리스트로 펼친다."""
+    """clean 대화 목록을 turn 번호 기준 요청 리스트로 펼친다."""
+    conversation_requests = [build_requests(row) for row in clean_rows]
     requests: list[dict[str, Any]] = []
-    for row in clean_rows:
-        requests.extend(build_requests(row))
+    max_turn_count = max((len(items) for items in conversation_requests), default=0)
+
+    for turn_offset in range(max_turn_count):
+        # 같은 turn 번호끼리 먼저 배치해 phase 실험의 warm/probe 간 prefix 재사용을 쉽게 만든다.
+        for items in conversation_requests:
+            if turn_offset < len(items):
+                requests.append(items[turn_offset])
     return requests
 
 
@@ -193,7 +199,7 @@ def main() -> None:
     clean_rows = select_clean_conversations(raw_rows, args.num_conversations)
     requests = build_all_requests(clean_rows)
 
-    # prefix cache locality 분석을 위해 원래 대화 순서를 유지한 trace를 저장한다.
+    # prefix cache locality 분석을 위해 같은 turn 번호끼리 묶은 trace를 저장한다.
     write_jsonl(args.output, requests)
 
     print(f"원시 파일: {raw_path}")
