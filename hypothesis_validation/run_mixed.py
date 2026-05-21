@@ -1,4 +1,4 @@
-"""역할: Chat(ShareGPT)과 RAG(HotpotQA) 두 워크로드를 동시에 vLLM 서버로 전송해
+"""역할: Chat(ShareGPT)과 RAG(SQuAD) 두 워크로드를 동시에 vLLM 서버로 전송해
        prefix KV cache pollution 현상을 측정한다.
 
 상세 과정:
@@ -26,6 +26,13 @@ DEFAULT_MAX_TOKENS = 128
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_CHAT_SLO_MS = 500.0
 DEFAULT_RAG_SLO_MS = 2000.0
+DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
+
+HYPOTHESIS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = HYPOTHESIS_DIR.parent
+DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_conversation.jsonl"
+DEFAULT_RAG_TRACE = REPO_ROOT / "workloads/squad/squad_validation.jsonl"
+DEFAULT_OUTPUT = HYPOTHESIS_DIR / "results/mixed_5_5_apc_on_len8192.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -59,13 +66,35 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Chat + RAG 두 workload를 동시에 전송해 cache pollution을 측정합니다.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "예시 (hypothesis_validation/ 에서):\n"
+            "  python run_mixed.py\n"
+            "  python run_mixed.py --chat-qps 5 --rag-qps 5 "
+            "--output results/mixed_5_5_apc_on_len8192.jsonl"
+        ),
     )
-    parser.add_argument("--chat-trace", type=Path, required=True, help="ShareGPT JSONL 경로")
-    parser.add_argument("--rag-trace", type=Path, required=True, help="HotpotQA JSONL 경로")
+    parser.add_argument(
+        "--chat-trace",
+        type=Path,
+        default=DEFAULT_CHAT_TRACE,
+        help="ShareGPT JSONL 경로",
+    )
+    parser.add_argument(
+        "--rag-trace",
+        type=Path,
+        default=DEFAULT_RAG_TRACE,
+        help="RAG JSONL 경로 (기본: SQuAD validation trace)",
+    )
     parser.add_argument("--chat-qps", type=float, default=5.0, help="Chat 도착 QPS")
     parser.add_argument("--rag-qps", type=float, default=5.0, help="RAG 도착 QPS")
-    parser.add_argument("--output", type=Path, required=True, help="결과 JSONL 저장 경로")
-    parser.add_argument("--url", default="http://localhost:8000/v1/chat/completions")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help="결과 JSONL 저장 경로",
+    )
+    parser.add_argument("--url", default=DEFAULT_URL, help="vLLM chat completions URL")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument("--max-concurrency", type=int, default=32)
@@ -75,6 +104,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chat-slo-ms", type=float, default=DEFAULT_CHAT_SLO_MS, help="Chat TTFT SLO (ms)")
     parser.add_argument("--rag-slo-ms", type=float, default=DEFAULT_RAG_SLO_MS, help="RAG TTFT SLO (ms)")
     return parser.parse_args()
+
+
+def resolve_trace_path(path: Path, label: str, build_hint: str) -> Path:
+    """trace 경로를 절대 경로로 변환하고, 없으면 생성 방법을 안내한다."""
+    resolved = path.expanduser().resolve()
+    if resolved.is_file():
+        return resolved
+    raise SystemExit(
+        f"{label} trace를 찾을 수 없습니다: {resolved}\n"
+        f"먼저 워크로드를 생성하세요:\n{build_hint}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +397,23 @@ def print_summary(
 
 
 async def main_async(args: argparse.Namespace) -> None:
-    chat_requests = load_jsonl(args.chat_trace)
-    rag_requests = load_jsonl(args.rag_trace)
+    chat_trace = resolve_trace_path(
+        args.chat_trace,
+        "Chat",
+        "  cd workloads/sharegpt && python build_sharegpt_workload.py "
+        "--num-conversations 5000 --output sharegpt_conversation.jsonl",
+    )
+    rag_trace = resolve_trace_path(
+        args.rag_trace,
+        "RAG",
+        "  cd workloads/squad && python build_squad_workload.py "
+        "--num-requests 5000 --output squad_validation.jsonl",
+    )
+    output_path = args.output.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    chat_requests = load_jsonl(chat_trace)
+    rag_requests = load_jsonl(rag_trace)
     if args.num_chat_prompts > 0:
         chat_requests = chat_requests[: args.num_chat_prompts]
     if args.num_rag_prompts > 0:
@@ -368,8 +423,11 @@ async def main_async(args: argparse.Namespace) -> None:
     print(
         f"chat={len(chat_requests)} @ {args.chat_qps} qps | "
         f"rag={len(rag_requests)} @ {args.rag_qps} qps | "
-        f"total={total} | concurrency={args.max_concurrency}"
+        f"total={total} | concurrency={args.max_concurrency} | url={args.url}"
     )
+    print(f"chat_trace={chat_trace}")
+    print(f"rag_trace={rag_trace}")
+    print(f"output={output_path}")
 
     queue: asyncio.Queue = asyncio.Queue()
     semaphore = asyncio.Semaphore(args.max_concurrency)
@@ -406,9 +464,9 @@ async def main_async(args: argparse.Namespace) -> None:
 
         duration_seconds = time.perf_counter() - start_perf
 
-    write_jsonl(args.output, results)
+    write_jsonl(output_path, results)
     print_summary(results, duration_seconds, args.chat_slo_ms, args.rag_slo_ms)
-    print(f"\n저장 완료: {args.output}")
+    print(f"\n저장 완료: {output_path}")
 
 
 def main() -> None:

@@ -3,7 +3,7 @@
 > **목적**: vLLM KV cache에서 발생하는 cross-workload eviction(cache pollution)을 실험적으로
 > 측정하기 위한 계측 아키텍처, 실험 시나리오, 결과 해석 방법을 설명한다.
 >
-> - **Workload A (가해자)**: RAG (HotpotQA) — 긴 prefix, 낮은 reuse
+> - **Workload A (가해자)**: RAG (SQuAD) — 긴 prefix, 낮은 reuse
 > - **Workload B (피해자)**: Chat (ShareGPT) — 짧은 prefix, 높은 reuse
 > - **핵심 질문**: RAG가 shared prefix cache를 점유해 Chat의 reusable block을 evict하고,
 >   그 결과 Chat의 TTFT/SLO가 isolated 실행 대비 실제로 악화되는가?
@@ -99,6 +99,8 @@ vllm/v1/request.py :: Request.__init__()
   "request_id": "req_001",       // 클라이언트 측 요청 ID
   "conversation_id": "conv_42",  // ShareGPT의 대화 ID (chat 전용)
   "turn_id": 2,                  // 대화 턴 번호 (chat 전용)
+  "squad_id": "56be4db0...",     // SQuAD row ID (rag 전용)
+  "context_hash": "d1f67c...",   // passage 그룹 식별 (rag 전용)
 
   "ttft": 0.312,                 // Time-to-First-Token (초)
   "mean_itl": 0.041,             // 평균 Inter-Token Latency (초)
@@ -229,12 +231,42 @@ eviction은 **새 요청이 block을 요구하는 순간**, 즉 prefill 시작 �
 
 | 항목 | 경로 |
 |---|---|
-| JJ repo | `/home/ubuntu/JJ-Distributed-LLM-Inference` |
+| JJ repo | `/home/ubuntu/JJ-distributed-LLM-inference` |
 | vLLM repo | `/home/ubuntu/vllm` |
 | vLLM venv | `/home/ubuntu/vllm/.venv` |
-| JJ runner venv | `/home/ubuntu/JJ-Distributed-LLM-Inference/.venv` |
+| JJ runner venv | `/home/ubuntu/JJ-distributed-LLM-inference/.venv` |
 
 실험은 두 터미널을 사용한다. 각 run 사이에 vLLM 서버를 재시작해 cache/queue 상태를 초기화한다.
+
+### 워크로드 trace 준비 (최초 1회)
+
+RAG trace는 SQuAD validation을 사용한다 (`workloads/squad/build_squad_workload.py`).
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python build_squad_workload.py \
+  --dataset-name rajpurkar/squad \
+  --subset plain_text \
+  --split validation \
+  --num-requests 5000 \
+  --output squad_validation.jsonl
+```
+
+Chat trace는 ShareGPT를 사용한다.
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/sharegpt
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python build_sharegpt_workload.py \
+  --repo-id anon8231489123/ShareGPT_Vicuna_unfiltered \
+  --filename ShareGPT_V3_unfiltered_cleaned_split.json \
+  --repo-type dataset \
+  --num-conversations 5000 \
+  --output sharegpt_conversation.jsonl
+```
 
 ---
 
@@ -261,8 +293,8 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 **Terminal 2 — 클라이언트:**
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
@@ -291,12 +323,12 @@ Terminal 1에서 서버를 재시작한 뒤 Terminal 2에서 실행한다.
 **Terminal 2 — 클라이언트:**
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
-  --trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --trace ../workloads/squad/squad_validation.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -325,7 +357,7 @@ source /home/ubuntu/vllm/.venv/bin/activate
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 
 # eviction log 절대 경로 지정 (서버 시작 전 설정 필수)
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation/results/eviction_mixed_5_5_apc_on_len8192.jsonl
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_5_5_apc_on_len8192.jsonl
 
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -337,23 +369,25 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 
 **Terminal 2 — 클라이언트:**
 
+`run_mixed.py`는 trace 경로·출력 파일에 기본값이 있어 인자 없이 `python run_mixed.py`만으로도 5:5 mixed 실험을 실행할 수 있다.
+
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 10.0 \
-  --rag-qps  10.0 \
-  --max-concurrency 64 \
+  --chat-qps 5.0 \
+  --rag-qps 5.0 \
+  --max-concurrency 32 \
   --num-chat-prompts 500 \
-  --num-rag-prompts  500 \
+  --num-rag-prompts 500 \
   --chat-slo-ms 500 \
-  --rag-slo-ms  2000 \
+  --rag-slo-ms 2000 \
   --output results/mixed_5_5_apc_on_len8192.jsonl
 ```
 
@@ -376,13 +410,13 @@ pollution은 cache 크기가 working set보다 작을 때만 발생한다. `--gp
 ### 5.2 Workload mix ratio sweep (§5.3 대응)
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 # Chat:RAG = 7:3
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 7.0 --rag-qps 3.0 \
@@ -394,7 +428,7 @@ python run_mixed.py \
 # Chat:RAG = 3:7
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 3.0 --rag-qps 7.0 \

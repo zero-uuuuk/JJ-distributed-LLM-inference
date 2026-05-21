@@ -16,6 +16,7 @@ _JSONL trace · Prefix cache analysis · QuotaServe_
 
 | 워크로드 | 디렉터리 | 특징 |
 |---|---|---|
+| SQuAD | [`squad/`](squad/) | RAG 형태의 단일 요청 trace (mixed 실험용) |
 | HotpotQA | [`hotpotqa/`](hotpotqa/) | RAG 형태의 단일 요청 trace |
 | ShareGPT | [`sharegpt/`](sharegpt/) | Multi-turn 대화 trace |
 
@@ -28,6 +29,48 @@ _JSONL trace · Prefix cache analysis · QuotaServe_
 ```bash
 uv pip install -r requirements.txt
 ```
+
+---
+
+## SQuAD
+
+SQuAD `validation` split을 RAG 형태의 JSONL trace로 변환합니다. `hypothesis_validation`의 Chat + RAG mixed 실험(5:5 등)에서 RAG workload로 사용합니다.
+
+단일 passage `context`를 프롬프트에 넣고, 같은 context를 공유하는 질문이 연속되도록 정렬해 prefix cache locality를 높입니다.
+
+```text
+Hugging Face SQuAD
+        │
+        ▼
+build_squad_workload.py
+        │
+        ├── context + question 직렬화
+        ├── messages (chat API) · prompt (completions fallback) 생성
+        └── 정답 · context_hash 메타데이터 보존
+        │
+        ▼
+workloads/squad/*.jsonl
+```
+
+### Trace 생성
+
+```bash
+cd workloads/squad
+python build_squad_workload.py \
+  --dataset-name rajpurkar/squad \
+  --subset plain_text \
+  --split validation \
+  --num-requests 5000 \
+  --output squad_validation.jsonl
+```
+
+기본 dataset은 `rajpurkar/squad`, subset은 `plain_text`, split은 `validation`입니다.
+
+생성되는 row는 `messages`를 주요 필드로 사용하고, 분석을 위해 `request_id`, `squad_id`, `question`, `answer`, `title`, `context_hash`, `context_char_len`, `prompt_char_len` 등을 함께 저장합니다.
+
+> [!NOTE]
+> **Prefix cache 최적화가 적용되어 있습니다.**
+> trace 전체를 `title` → `context` → `question` 순으로 정렬해, 동일 passage를 공유하는 요청이 연속으로 배치됩니다.
 
 ---
 
@@ -114,5 +157,5 @@ python build_sharegpt_workload.py \
 ---
 
 <div align="center">
-<sub>HotpotQA · ShareGPT · Workloads · JJ Distributed LLM Inference</sub>
+<sub>SQuAD · HotpotQA · ShareGPT · Workloads · JJ Distributed LLM Inference</sub>
 </div>

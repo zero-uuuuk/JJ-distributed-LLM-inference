@@ -12,7 +12,7 @@ _Mixed workload · Prefix KV cache · SLO attainment_
 
 ## 개요
 
-Mixed workload 환경에서 RAG(HotpotQA)의 prefix KV cache가 shared cache pool을 점유해 Chat(ShareGPT)의 reusable KV를 evict시키고, Chat의 TTFT · SLO attainment가 isolated 실행 대비 악화된다는 가설을 검증합니다.
+Mixed workload 환경에서 RAG(SQuAD)의 prefix KV cache가 shared cache pool을 점유해 Chat(ShareGPT)의 reusable KV를 evict시키고, Chat의 TTFT · SLO attainment가 isolated 실행 대비 악화된다는 가설을 검증합니다.
 
 가설 상세 및 실험 설계 → [`HYPOTHESIS.md`](HYPOTHESIS.md)
 
@@ -53,10 +53,10 @@ Case 1·2의 결과와 Case 3을 비교해 cache pollution을 정량화합니다
 
 | 항목 | 경로 |
 |---|---|
-| JJ repo | `/home/ubuntu/JJ-Distributed-LLM-Inference` |
+| JJ repo | `/home/ubuntu/JJ-distributed-LLM-inference` |
 | vLLM repo | `/home/ubuntu/vllm` |
 | vLLM venv | `/home/ubuntu/vllm/.venv` |
-| JJ runner venv | `/home/ubuntu/JJ-Distributed-LLM-Inference/.venv` |
+| JJ runner venv | `/home/ubuntu/JJ-distributed-LLM-inference/.venv` |
 
 서버는 모든 run에서 `--max-model-len 8192`로 고정합니다.
 
@@ -65,12 +65,12 @@ Case 1·2의 결과와 Case 3을 비교해 cache pollution을 정량화합니다
 Terminal 2에서 최초 1회 실행합니다.
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference
+cd /home/ubuntu/JJ-distributed-LLM-inference
 
 export PATH="$HOME/.local/bin:$PATH"
 
 uv venv --python 3.12
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 uv pip install -r requirements.txt
 
@@ -80,20 +80,20 @@ python -c "import aiohttp, numpy, tqdm; print('runner deps ok')"
 워크로드가 아직 없으면 생성합니다.
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
-python build_rag_workload.py \
-  --dataset-name hotpotqa/hotpot_qa \
-  --subset distractor \
+python build_squad_workload.py \
+  --dataset-name rajpurkar/squad \
+  --subset plain_text \
   --split validation \
   --num-requests 5000 \
-  --output hotpotqa_distractor_validation.jsonl
+  --output squad_validation.jsonl
 ```
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/sharegpt
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/sharegpt
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python build_sharegpt_workload.py \
   --repo-id anon8231489123/ShareGPT_Vicuna_unfiltered \
@@ -106,8 +106,8 @@ python build_sharegpt_workload.py \
 생성 확인:
 
 ```bash
-ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa/*.jsonl
-ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/sharegpt/*.jsonl
+ls -lh /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad/*.jsonl
+ls -lh /home/ubuntu/JJ-distributed-LLM-inference/workloads/sharegpt/*.jsonl
 ```
 
 ### 1. Chat Isolated
@@ -131,8 +131,8 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 Terminal 2 — 클라이언트:
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
@@ -155,12 +155,12 @@ Terminal 1에서 서버를 재시작합니다. cache/queue 상태 초기화를 �
 Terminal 2:
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
-  --trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --trace ../workloads/squad/squad_validation.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -193,13 +193,13 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 Terminal 2:
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/hypothesis_validation
-source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -219,7 +219,7 @@ python run_mixed.py \
 - 각 run 사이에 vLLM 서버를 재시작해 cache/queue 상태를 초기화합니다.
 - 비교군 사이에서 `num-prompts`, `qps`, `max-concurrency`, `--max-model-len 8192`를 고정합니다.
 - isolated와 mixed 모두 chat completions endpoint를 사용합니다.
-- vLLM 서버는 `/home/ubuntu/vllm/.venv`, JJ runner는 `/home/ubuntu/JJ-Distributed-LLM-Inference/.venv`를 사용합니다.
+- vLLM 서버는 `/home/ubuntu/vllm/.venv`, JJ runner는 `/home/ubuntu/JJ-distributed-LLM-inference/.venv`를 사용합니다.
 
 ---
 
