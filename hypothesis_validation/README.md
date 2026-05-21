@@ -12,7 +12,7 @@ _Mixed workload · Prefix KV cache · SLO attainment_
 
 ## 개요
 
-Mixed workload 환경에서 RAG(SQuAD)의 prefix KV cache가 shared cache pool을 점유해 Chat(ShareGPT)의 reusable KV를 evict시키고, Chat의 TTFT · SLO attainment가 isolated 실행 대비 악화된다는 가설을 검증합니다.
+Mixed workload 환경에서 RAG(HotpotQA)의 prefix KV cache가 shared cache pool을 점유해 Chat(ShareGPT)의 reusable KV를 evict시키고, Chat의 TTFT · SLO attainment가 isolated 실행 대비 악화된다는 가설을 검증합니다.
 
 가설 상세 및 실험 설계 → [`HYPOTHESIS.md`](HYPOTHESIS.md)
 
@@ -80,15 +80,15 @@ python -c "import aiohttp, numpy, tqdm; print('runner deps ok')"
 워크로드가 아직 없으면 생성합니다.
 
 ```bash
-cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/squad
+cd /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa
 source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
 
 python build_rag_workload.py \
-  --dataset-name rajpurkar/squad \
-  --subset plain_text \
+  --dataset-name hotpotqa/hotpot_qa \
+  --subset distractor \
   --split validation \
   --num-requests 5000 \
-  --output squad_validation.jsonl
+  --output hotpotqa_distractor_validation.jsonl
 ```
 
 ```bash
@@ -106,7 +106,7 @@ python build_sharegpt_workload.py \
 생성 확인:
 
 ```bash
-ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/squad/*.jsonl
+ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/hotpotqa/*.jsonl
 ls -lh /home/ubuntu/JJ-Distributed-LLM-Inference/workloads/sharegpt/*.jsonl
 ```
 
@@ -160,7 +160,7 @@ source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
-  --trace ../workloads/squad/squad_validation.jsonl \
+  --trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -199,7 +199,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
+  --rag-trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \

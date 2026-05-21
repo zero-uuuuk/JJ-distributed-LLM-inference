@@ -3,7 +3,7 @@
 > **목적**: vLLM KV cache에서 발생하는 cross-workload eviction(cache pollution)을 실험적으로
 > 측정하기 위한 계측 아키텍처, 실험 시나리오, 결과 해석 방법을 설명한다.
 >
-> - **Workload A (가해자)**: RAG (SQuAD) — 반복 context prefix, 높은 reuse
+> - **Workload A (가해자)**: RAG (HotpotQA) — 긴 prefix, 낮은 reuse
 > - **Workload B (피해자)**: Chat (ShareGPT) — 짧은 prefix, 높은 reuse
 > - **핵심 질문**: RAG가 shared prefix cache를 점유해 Chat의 reusable block을 evict하고,
 >   그 결과 Chat의 TTFT/SLO가 isolated 실행 대비 실제로 악화되는가?
@@ -296,7 +296,7 @@ source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
-  --trace ../workloads/squad/squad_validation.jsonl \
+  --trace ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -344,7 +344,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/squad/squad_validation.jsonl \
+  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 10.0 \
@@ -382,7 +382,7 @@ source /home/ubuntu/JJ-Distributed-LLM-Inference/.venv/bin/activate
 # Chat:RAG = 7:3
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/squad/squad_validation.jsonl \
+  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 7.0 --rag-qps 3.0 \
@@ -394,7 +394,7 @@ python run_mixed.py \
 # Chat:RAG = 3:7
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
-  --rag-trace  ../workloads/squad/squad_validation.jsonl \
+  --rag-trace  ../workloads/hotpotqa/hotpotqa_distractor_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 3.0 --rag-qps 7.0 \
