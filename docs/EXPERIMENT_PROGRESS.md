@@ -201,6 +201,67 @@ RAG QPS는 올라갔지만 RAG가 실험 중간에 끝난다.
 
 ---
 
+### 2.6 Mixed chat5/rag5, long-context RAG 1500
+
+SQuAD RAG가 평균 250~280 tokens 정도로 짧아 RAG pressure가 약할 수 있다고 판단했다. 그래서 SQuAD context paragraph를 여러 개 붙여 long-context RAG workload를 만들었다.
+
+long-context workload는 padding 문자를 반복하는 방식이 아니라, SQuAD의 다른 context paragraph들을 deterministic하게 이어 붙이는 방식이다.
+
+```text
+Passage 1: original SQuAD context
+Passage 2: next SQuAD context
+Passage 3: next SQuAD context
+...
+Question: original SQuAD question
+Answer:
+```
+
+`longctx1500` 결과에서는 실제 RAG prompt가 평균 약 2K tokens까지 증가했다.
+
+| 항목 | 기존 SQuAD chat5/rag5 | longctx1500 chat5/rag5 |
+|---|---:|---:|
+| RAG avg input tokens | 약 252 | 약 2,096 |
+| RAG token hit | 75.7% | 90.8% |
+| RAG SLO attainment | 약 95.7% | 85.6% |
+| Chat token hit | 9.45% | 7.55% |
+| Chat TTFT P95 | 2.91 s | 3.65 s |
+| Chat SLO attainment | 76.22% | 69.44% |
+
+eviction attribution:
+
+| 조합 | 기존 SQuAD chat5/rag5 | longctx1500 chat5/rag5 |
+|---|---:|---:|
+| chat-rag total | 2,917 | 7,415 |
+| chat-rag useful | 2,470 | 6,266 |
+| chat-rag useful rate | 84.68% | 84.50% |
+| cross-workload eviction ratio | 약 14.0% | 34.1% |
+
+turn별 Chat SLO:
+
+| Turn | Chat-only qps5 | longctx1500 chat5/rag5 | SLODrop |
+|---:|---:|---:|---:|
+| 6 | 99% | 76% | 23%p |
+| 7 | 83% | 50% | 33%p |
+| 8 | 41% | 1% | 40%p |
+| 9 | 9% | 0% | 9%p |
+
+해석:
+
+```text
+RAG prompt를 길게 만들면 RAG-triggered useful eviction of Chat blocks가 크게 증가한다.
+그 결과 Chat later-turn TTFT tail과 SLO가 isolated baseline 대비 더 크게 악화된다.
+현재까지 결과 중 QuataCache 문제 정의에 가장 가까운 신호다.
+```
+
+주의할 점:
+
+```text
+longctx1500에서는 RAG 자체도 무거워져 RAG SLO가 약 85.6%까지 하락한다.
+따라서 이후 실험에서는 Chat degradation뿐 아니라 RAG SLO sacrifice도 함께 봐야 한다.
+```
+
+---
+
 ## 3. 현재 결론
 
 ```text
@@ -209,6 +270,7 @@ RAG QPS는 올라갔지만 RAG가 실험 중간에 끝난다.
 3. chat5/rag5에서는 Chat SLO degradation과 chat-rag useful eviction이 함께 관찰된다.
 4. ratio sweep은 Chat QPS가 같이 변해서 인과 해석이 어렵다.
 5. pressure sweep은 Chat QPS 고정 + duration matching이 필요하다.
+6. RAG prompt length를 늘리면 chat-rag useful eviction과 Chat later-turn SLO degradation이 강해진다.
 ```
 
 이 결과는 다음 주장을 뒷받침한다.
@@ -223,14 +285,34 @@ Raw hit rate degradation만으로 serving 품질 저하를 설명할 수 없다.
 
 ## 4. 다음 실험
 
-이제 duration matching을 적용한 pressure sweep을 수행한다.
+다음은 `longctx1500` RAG로 duration matching을 적용한 `chat5/rag10` 실험을 수행한다.
 
 ```text
-chat5/rag10:
+chat5/rag10 longctx1500:
   --num-chat-prompts 900
   --num-rag-prompts 1800
+```
 
-chat5/rag15:
+실행 목적:
+
+```text
+RAG prompt length가 긴 상태에서 RAG QPS를 5 -> 10으로 올렸을 때,
+chat-rag useful eviction과 Chat turn 7/8/9 SLODrop이 더 증가하는지 확인한다.
+```
+
+주의:
+
+```text
+RAG 1800 / 10 QPS ~= 180s
+Chat 900 / 5 QPS ~= 180s
+
+따라서 두 workload가 비슷한 시간 동안 같이 실행된다.
+```
+
+이후 여유가 있으면 다음 실험을 추가한다.
+
+```text
+chat5/rag15 longctx1500:
   --num-chat-prompts 900
   --num-rag-prompts 2700
 ```
