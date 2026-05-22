@@ -3,10 +3,10 @@
 > **목적**: vLLM KV cache에서 발생하는 cross-workload eviction(cache pollution)을 실험적으로
 > 측정하기 위한 계측 아키텍처, 실험 시나리오, 결과 해석 방법을 설명한다.
 >
-> - **Workload A (가해자)**: RAG (SQuAD) — 긴 prefix, 낮은 reuse
-> - **Workload B (피해자)**: Chat (ShareGPT) — 짧은 prefix, 높은 reuse
-> - **핵심 질문**: RAG가 shared prefix cache를 점유해 Chat의 reusable block을 evict하고,
->   그 결과 Chat의 TTFT/SLO가 isolated 실행 대비 실제로 악화되는가?
+> - **Pressure workload 후보**: RAG (SQuAD) — cache 공간을 채우는 요청
+> - **Victim workload**: Chat (ShareGPT) — 같은 conversation prefix가 여러 turn에서 재사용되는 요청
+> - **핵심 질문**: mixed workload에서 발생한 eviction이 단순히 많아지는가가 아니라,
+>   나중에 다시 쓰일 victim prefix block을 evict해 Chat의 hit rate/TTFT/SLO를 악화시키는가?
 
 ---
 
@@ -254,7 +254,9 @@ python build_squad_workload.py \
   --output squad_validation.jsonl
 ```
 
-Chat trace는 ShareGPT를 사용한다.
+Chat trace는 ShareGPT를 사용한다. cache pollution의 victim을 만들려면 같은
+`conversation_id`가 turn 1부터 turn 9까지 반복 등장해야 한다. 따라서 turn 수가
+충분한 conversation만 고르고, `turn-major` 순서로 저장한다.
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/sharegpt
@@ -264,9 +266,26 @@ python build_sharegpt_workload.py \
   --repo-id anon8231489123/ShareGPT_Vicuna_unfiltered \
   --filename ShareGPT_V3_unfiltered_cleaned_split.json \
   --repo-type dataset \
-  --num-conversations 5000 \
-  --output sharegpt_conversation.jsonl
+  --num-conversations 100 \
+  --min-turns 9 \
+  --max-turns 9 \
+  --order turn-major \
+  --output sharegpt_turn_major_100conv_9turn.jsonl
 ```
+
+이 trace는 최대 `100 conversations × 9 turns = 900 requests` 구조를 가진다.
+`turn-major` 순서는 다음처럼 저장된다.
+
+```
+conv1_turn1, conv2_turn1, ..., conv100_turn1,
+conv1_turn2, conv2_turn2, ..., conv100_turn2,
+...
+conv1_turn9, conv2_turn9, ..., conv100_turn9
+```
+
+> **주의**: `--num-conversations 5000`으로 만든 turn-major trace에서
+> `run_mixed.py --num-chat-prompts 920`처럼 앞부분만 자르면 turn 1만 전송될 수 있다.
+> victim 실험에서는 conversation 수를 줄이고 turn depth를 보장한다.
 
 ---
 
@@ -298,14 +317,14 @@ source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_trace.py \
-  --trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
+  --trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --workload-tag chat \
   --qps 10.0 \
   --max-concurrency 64 \
-  --num-prompts 500 \
+  --num-prompts 900 \
   --slo-ms 500 \
   --output results/chat_isolated_apc_on_len8192.jsonl
 ```
@@ -369,29 +388,28 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 
 **Terminal 2 — 클라이언트:**
 
-`run_mixed.py`는 trace 경로·출력 파일에 기본값이 있어 인자 없이 `python run_mixed.py`만으로도 5:5 mixed 실험을 실행할 수 있다.
-
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 mkdir -p results
 
 python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 5.0 \
-  --rag-qps 5.0 \
-  --max-concurrency 32 \
-  --num-chat-prompts 500 \
-  --num-rag-prompts 500 \
+  --chat-qps 10.0 \
+  --rag-qps 10.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 \
+  --num-rag-prompts 900 \
   --chat-slo-ms 500 \
   --rag-slo-ms 2000 \
   --output results/mixed_5_5_apc_on_len8192.jsonl
 ```
 
-**측정 지표**: Case 1/2와 동일 + pollution metrics (§6).
+**측정 지표**: Case 1/2와 동일 + pollution metrics (§6). 특히
+`UsefulCrossEviction(chat ← RAG)`와 `time_until_next_reuse`를 확인한다.
 
 ---
 
@@ -415,25 +433,25 @@ source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 # Chat:RAG = 7:3
 python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 7.0 --rag-qps 3.0 \
-  --max-concurrency 32 \
-  --num-chat-prompts 500 --num-rag-prompts 500 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 --num-rag-prompts 900 \
   --chat-slo-ms 500 --rag-slo-ms 2000 \
   --output results/mixed_7_3_apc_on_len8192.jsonl
 
 # Chat:RAG = 3:7
 python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_conversation.jsonl \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 3.0 --rag-qps 7.0 \
-  --max-concurrency 32 \
-  --num-chat-prompts 500 --num-rag-prompts 500 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 --num-rag-prompts 900 \
   --chat-slo-ms 500 --rag-slo-ms 2000 \
   --output results/mixed_3_7_apc_on_len8192.jsonl
 ```
@@ -443,6 +461,11 @@ python run_mixed.py \
 ## 6. Pollution Metrics 계산 및 해석
 
 아래 세 단계 지표를 순서대로 확인한다. 세 가지가 모두 유의미하게 나타날 때 "cache pollution이 실제 문제"라고 결론 내릴 수 있다.
+단, 핵심은 eviction 수 자체가 아니라 eviction된 block이 미래에 다시 필요했는지이다.
+
+```
+Cache pressure != Useful cache pressure
+```
 
 ### (1) Hit rate degradation
 
@@ -476,7 +499,7 @@ CrossEviction(rag ← chat)    = evicted_workload == "rag"  AND trigger_workload
 - `CrossEviction(chat ← RAG)`가 크면 **RAG가 Chat cache를 밀어낸 직접 증거**
 - `CrossEviction`이 `SelfEviction`보다 현저히 크면 pollution의 주범이 cross-workload 경쟁임을 시사
 
-추가로 `reused_later` 필드를 활용해 "유용한" cross-eviction을 분리할 수 있다:
+추가로 `reused_later` 필드를 활용해 "유용한" cross-eviction을 분리한다. 이 값이 cache pollution의 핵심 지표다:
 
 ```
 UsefulCrossEviction(chat ← RAG)
@@ -487,6 +510,27 @@ AvgTimeToReuse = time_until_next_reuse 의 평균 (reused_later==true 행만)
 
 - `UsefulCrossEviction`이 크면 RAG가 **나중에 다시 쓰일 Chat block**을 밀어낸 증거
 - `AvgTimeToReuse`가 짧을수록 pollution의 심각도가 큼 (eviction 직후 재계산 낭비가 많음)
+
+조합별 표기는 다음을 따른다.
+
+```
+evicted_workload - trigger_workload
+= [쫓겨난 쪽] - [쫓아낸 쪽]
+
+chat-rag = RAG가 Chat을 evict
+rag-chat = Chat이 RAG를 evict
+chat-chat = Chat이 Chat을 evict
+rag-rag = RAG가 RAG를 evict
+```
+
+예시 해석:
+
+| 조합 | 의미 | 해석 |
+|---|---|---|
+| `chat-rag` | RAG가 Chat을 evict | 가설의 핵심 cross-workload pollution |
+| `chat-chat` | Chat이 Chat을 evict | victim workload 내부 self-interference |
+| `rag-chat` | Chat이 RAG를 evict | 반대 방향 cross-workload interference |
+| `rag-rag` | RAG가 RAG를 evict | pressure workload 내부 self-eviction |
 
 ---
 
@@ -501,8 +545,8 @@ AvgTimeToReuse = time_until_next_reuse 의 평균 (reused_later==true 행만)
 
 | RAG hit rate | CrossEviction(chat ← RAG) 비율 | 해석 |
 |---|---|---|
-| 낮음 (< 20%) | 높음 (> 50%) | "selfish" pollution — RAG가 cache 점유 후 reuse 안 하고 Chat을 밀어냄 |
-| 높음 (> 60%) | 낮음 | RAG도 cache를 유용하게 활용 중 — pollution 아님 |
+| 낮음 (< 20%) | 높음 (> 50%) | "selfish" pollution 후보 — 단, UsefulCrossEviction으로 확인 필요 |
+| 높음 (> 60%) | 낮음 | RAG도 cache를 유용하게 활용 중 — pollution 약함 |
 | 낮음 | 낮음 | Cache가 충분해 경쟁 없음 |
 
 ---
@@ -553,4 +597,6 @@ hypothesis_validation/results/
 - [ ] Case 1, 2의 기준선 결과가 먼저 수집되었는가 (비교 기준 없이 Case 3만 실행하면 pollution 정량화 불가)
 - [ ] 각 run 사이에 vLLM 서버를 재시작했는가 (cache/queue 상태 초기화)
 - [ ] 동일 `--gpu-memory-utilization 0.6`으로 Case 1/2/3를 실행했는가 (조건 통제)
-- [ ] `--num-prompts` 가 충분히 큰가 (권장 ≥ 500 per workload)
+- [ ] ShareGPT victim trace가 `--min-turns 9 --max-turns 9 --num-conversations 100`처럼 같은 `conversation_id`를 여러 turn에 걸쳐 포함하는가
+- [ ] `--num-chat-prompts`가 turn 1만 자르지 않는가 (`100conv × 9turn`이면 900 권장)
+- [ ] `--num-prompts` 가 충분히 큰가 (victim trace 기준 900 per workload 권장)

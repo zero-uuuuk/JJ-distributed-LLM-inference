@@ -65,6 +65,24 @@ def parse_args() -> argparse.Namespace:
         default=5_000,
         help="trace에 사용할 clean 대화 수입니다. 0 이하이면 전체 clean 대화를 사용합니다.",
     )
+    parser.add_argument(
+        "--min-turns",
+        type=int,
+        default=1,
+        help="최소 turn 수입니다. victim trace에서는 9처럼 설정해 같은 conversation_id의 재사용을 보장합니다.",
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=0,
+        help="conversation별 최대 turn 수입니다. 0 이하이면 제한하지 않습니다.",
+    )
+    parser.add_argument(
+        "--order",
+        choices=("turn-major", "conversation-major"),
+        default="turn-major",
+        help="요청 저장 순서입니다. turn-major는 같은 turn 번호끼리 먼저 저장합니다.",
+    )
     return parser.parse_args()
 
 
@@ -114,12 +132,17 @@ def is_clean_conversation(messages: list[dict[str, Any]]) -> bool:
 def select_clean_conversations(
     raw_rows: list[dict[str, Any]],
     num_conversations: int,
+    min_turns: int,
 ) -> list[dict[str, Any]]:
     """원시 row에서 clean 대화만 선택하고 최대 개수로 제한한다."""
+    if min_turns < 1:
+        raise SystemExit("--min-turns는 1 이상이어야 합니다.")
+
     clean_rows = [
         row
         for row in raw_rows
         if is_clean_conversation(row.get("conversations", []))
+        and len(row.get("conversations", [])) // 2 >= min_turns
     ]
     if num_conversations > 0:
         return clean_rows[:num_conversations]
@@ -131,10 +154,15 @@ def select_clean_conversations(
 # ---------------------------------------------------------------------------
 
 
-def build_requests(conversation_row: dict[str, Any]) -> list[dict[str, Any]]:
+def build_requests(
+    conversation_row: dict[str, Any],
+    max_turns: int,
+) -> list[dict[str, Any]]:
     """하나의 ShareGPT 대화를 turn별 요청 리스트로 변환한다."""
     conversation_id = conversation_row.get("id")
     messages = conversation_row["conversations"]
+    if max_turns > 0:
+        messages = messages[: max_turns * 2]
     history: list[dict[str, str]] = []
     requests: list[dict[str, Any]] = []
 
@@ -167,9 +195,20 @@ def build_requests(conversation_row: dict[str, Any]) -> list[dict[str, Any]]:
     return requests
 
 
-def build_all_requests(clean_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_all_requests(
+    clean_rows: list[dict[str, Any]],
+    max_turns: int,
+    order: str,
+) -> list[dict[str, Any]]:
     """clean 대화 목록을 turn 번호 기준 요청 리스트로 펼친다."""
-    conversation_requests = [build_requests(row) for row in clean_rows]
+    conversation_requests = [build_requests(row, max_turns) for row in clean_rows]
+
+    if order == "conversation-major":
+        requests: list[dict[str, Any]] = []
+        for items in conversation_requests:
+            requests.extend(items)
+        return requests
+
     requests: list[dict[str, Any]] = []
     max_turn_count = max((len(items) for items in conversation_requests), default=0)
 
@@ -196,8 +235,16 @@ def main() -> None:
     )
 
     raw_rows = load_json(raw_path)
-    clean_rows = select_clean_conversations(raw_rows, args.num_conversations)
-    requests = build_all_requests(clean_rows)
+    clean_rows = select_clean_conversations(
+        raw_rows=raw_rows,
+        num_conversations=args.num_conversations,
+        min_turns=args.min_turns,
+    )
+    requests = build_all_requests(
+        clean_rows=clean_rows,
+        max_turns=args.max_turns,
+        order=args.order,
+    )
 
     # prefix cache locality 분석을 위해 같은 turn 번호끼리 묶은 trace를 저장한다.
     write_jsonl(args.output, requests)
@@ -205,6 +252,9 @@ def main() -> None:
     print(f"원시 파일: {raw_path}")
     print(f"원시 대화 수: {len(raw_rows)}")
     print(f"사용한 clean 대화 수: {len(clean_rows)}")
+    print(f"최소 turn 수: {args.min_turns}")
+    print(f"최대 turn 수: {'제한 없음' if args.max_turns <= 0 else args.max_turns}")
+    print(f"요청 순서: {args.order}")
     print(f"요청 수: {len(requests)}")
     print(f"저장 완료: {args.output}")
 

@@ -154,6 +154,60 @@ python build_sharegpt_workload.py \
 
 생성되는 row는 `messages`를 주요 필드로 사용하고, 분석을 위해 `request_id`, `conversation_id`, `turn_id`, `output_text`, `source_dataset`, `cache_pattern` 등을 함께 저장합니다.
 
+기본 저장 순서는 `turn-major`입니다. 즉 모든 conversation의 turn 1을 먼저 저장한 뒤, turn 2, turn 3 순서로 저장합니다.
+
+```text
+conv1_turn1
+conv2_turn1
+...
+convN_turn1
+conv1_turn2
+conv2_turn2
+...
+convN_turn2
+```
+
+따라서 `run_mixed.py --num-chat-prompts 920`처럼 앞부분만 잘라 실행하면, `--num-conversations`가 920보다 큰 경우 turn 1만 전송될 수 있습니다.
+
+### Victim Trace 생성
+
+cache pollution 실험에서 Chat을 victim workload로 만들려면 같은 `conversation_id`가 여러 turn에 걸쳐 반복 등장해야 합니다. 이를 위해 turn 수가 충분한 conversation만 고르고, turn 9까지만 사용해 작은 victim trace를 만듭니다.
+
+```bash
+cd workloads/sharegpt
+python build_sharegpt_workload.py \
+  --repo-id anon8231489123/ShareGPT_Vicuna_unfiltered \
+  --filename ShareGPT_V3_unfiltered_cleaned_split.json \
+  --repo-type dataset \
+  --num-conversations 100 \
+  --min-turns 9 \
+  --max-turns 9 \
+  --order turn-major \
+  --output sharegpt_turn_major_100conv_9turn.jsonl
+```
+
+이 trace는 최대 다음 구조를 가집니다.
+
+```text
+100 conversations × 9 turns = 900 requests
+```
+
+Mixed 실험에서는 다음처럼 앞 900개를 사용하면 turn 1부터 turn 9까지 같은 conversation들이 반복되어, delayed prefix reuse를 관찰할 수 있습니다.
+
+```bash
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation.jsonl \
+  --chat-qps 10.0 \
+  --rag-qps 10.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 \
+  --num-rag-prompts 900 \
+  --output results/mixed_5_5_victim_chat_squad.jsonl
+```
+
+이 구성의 목적은 production traffic을 그대로 모사하는 것이 아니라, `turn 1`에서 cache에 올라간 Chat prefix가 `turn 2`~`turn 9`에서 다시 필요해지는 victim 구조를 명확히 만드는 것입니다.
+
 ---
 
 <div align="center">
