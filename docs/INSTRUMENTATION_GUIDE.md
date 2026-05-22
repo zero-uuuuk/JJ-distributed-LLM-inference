@@ -376,7 +376,7 @@ source /home/ubuntu/vllm/.venv/bin/activate
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 
 # eviction log 절대 경로 지정 (서버 시작 전 설정 필수)
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_chat5_rag5_apc_on_len8192_util06.jsonl
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_chat5_rag5_longctx1500_util06.jsonl
 
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -395,7 +395,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -405,7 +405,7 @@ python run_mixed.py \
   --num-rag-prompts 900 \
   --chat-slo-ms 500 \
   --rag-slo-ms 2000 \
-  --output results/mixed_chat5_rag5_apc_on_len8192_util06.jsonl
+  --output results/mixed_chat5_rag5_longctx1500_util06.jsonl
 ```
 
 **측정 지표**: Case 1/2와 동일 + pollution metrics (§6). 특히
@@ -448,7 +448,54 @@ num_rag_prompts / rag_qps ~= num_chat_prompts / chat_qps
 
 각 run은 서버를 재시작하고 `VLLM_EVICTION_LOG`를 새 파일명으로 지정한 뒤 실행한다.
 
-**Terminal 1 — 5:15 서버:**
+앞으로 RAG pressure 실험은 long-context SQuAD trace를 기본으로 사용한다. 일반 SQuAD는 평균 prompt가 짧아 RAG가 Chat보다 약한 pressure workload가 될 수 있다.
+
+---
+
+### 5.3 Long-context RAG experiment matrix
+
+#### 5.3.1 Long-context SQuAD trace 생성
+
+SQuAD context paragraph를 여러 개 이어 붙여 RAG-like long prompt를 만든다. padding 문자를 반복하지 않고, deterministic하게 인접 SQuAD context를 `Passage 1`, `Passage 2`, ... 형태로 붙인다.
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python build_squad_workload.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 8 \
+  --target-prompt-tokens 500 \
+  --output squad_validation_longctx500.jsonl
+
+python build_squad_workload.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 8 \
+  --target-prompt-tokens 1500 \
+  --output squad_validation_longctx1500.jsonl
+
+python build_squad_workload.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 16 \
+  --target-prompt-tokens 3000 \
+  --output squad_validation_longctx3000.jsonl
+```
+
+생성 후 실제 tokenizer 기준 길이는 vLLM 결과의 `prompt_tokens`로 확인한다.
+
+```bash
+ls -lh /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad/*longctx*.jsonl
+```
+
+#### 5.3.2 서버 실행 템플릿
+
+각 run마다 서버를 재시작하고 `RUN_NAME`, `UTIL`만 바꾼다.
 
 ```bash
 cd /home/ubuntu/vllm
@@ -456,18 +503,30 @@ source /home/ubuntu/vllm/.venv/bin/activate
 
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 
+RUN_NAME=mixed_chat5_rag5_longctx1500_util06
+UTIL=0.6
+
 mkdir -p /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_chat5_rag15_apc_on_len8192_util06.jsonl
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_${RUN_NAME}.jsonl
 
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
   --max-model-len 8192 \
-  --gpu-memory-utilization 0.6 \
+  --gpu-memory-utilization ${UTIL} \
   --port 8000
 ```
 
-**Terminal 2 — 5:15 클라이언트:**
+#### 5.3.3 chat5/rag5 longctx1500
+
+Terminal 1:
+
+```bash
+RUN_NAME=mixed_chat5_rag5_longctx1500_util06
+UTIL=0.6
+```
+
+Terminal 2:
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
@@ -476,7 +535,69 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 \
+  --rag-qps 5.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 \
+  --num-rag-prompts 900 \
+  --chat-slo-ms 500 \
+  --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag5_longctx1500_util06.jsonl
+```
+
+#### 5.3.4 chat5/rag10 longctx1500
+
+Terminal 1:
+
+```bash
+RUN_NAME=mixed_chat5_rag10_longctx1500_util06
+UTIL=0.6
+```
+
+Terminal 2:
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+mkdir -p results
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 \
+  --rag-qps 10.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 \
+  --num-rag-prompts 1800 \
+  --chat-slo-ms 500 \
+  --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag10_longctx1500_util06.jsonl
+```
+
+#### 5.3.5 chat5/rag15 longctx1500
+
+Terminal 1:
+
+```bash
+RUN_NAME=mixed_chat5_rag15_longctx1500_util06
+UTIL=0.6
+```
+
+Terminal 2:
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+mkdir -p results
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -486,19 +607,70 @@ python run_mixed.py \
   --num-rag-prompts 2700 \
   --chat-slo-ms 500 \
   --rag-slo-ms 2000 \
-  --output results/mixed_chat5_rag15_apc_on_len8192_util06.jsonl
+  --output results/mixed_chat5_rag15_longctx1500_util06.jsonl
+```
+
+#### 5.3.6 Context length sweep: ctx500 / ctx1500 / ctx3000
+
+Chat/RAG QPS는 `5:5`로 고정하고 RAG prompt length만 바꾼다.
+
+Terminal 1의 `RUN_NAME`과 Terminal 2의 `--rag-trace`, `--output`만 바꾼다.
+
+```bash
+# ctx500
+RUN_NAME=mixed_chat5_rag5_longctx500_util06
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx500.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 --rag-qps 5.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 --num-rag-prompts 900 \
+  --chat-slo-ms 500 --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag5_longctx500_util06.jsonl
+
+# ctx1500
+RUN_NAME=mixed_chat5_rag5_longctx1500_util06
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 --rag-qps 5.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 --num-rag-prompts 900 \
+  --chat-slo-ms 500 --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag5_longctx1500_util06.jsonl
+
+# ctx3000
+RUN_NAME=mixed_chat5_rag5_longctx3000_util06
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx3000.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 --rag-qps 5.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 --num-rag-prompts 900 \
+  --chat-slo-ms 500 --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag5_longctx3000_util06.jsonl
 ```
 
 비교 지표:
 
 - RAG QPS 증가에 따른 `UsefulCrossEviction(chat ← RAG)` count/rate
+- RAG prompt length 증가에 따른 `UsefulCrossEviction(chat ← RAG)` count/rate
 - Chat turn별 token-weighted hit drop
 - Chat turn별 TTFT p95 / SLO attainment drop
-- RAG SLO가 유지되는지 여부
+- RAG SLO sacrifice
 
 ---
 
-### 5.3 Optional: ratio sweep
+### 5.4 Optional: ratio sweep
 
 Chat:RAG ratio sweep (`7:3`, `3:7`, `1:9`, `9:1`)은 보조 실험으로만 사용한다. ratio sweep은 workload composition의 효과를 보는 데는 유용하지만, Chat QPS도 함께 변하므로 RAG pressure의 인과를 단독으로 보여주기 어렵다.
 
@@ -506,7 +678,7 @@ ratio sweep을 수행할 때도 각 workload가 비슷한 시간 동안 실행�
 
 ---
 
-### 5.4 Control: conversation-major Chat trace
+### 5.5 Control: conversation-major Chat trace
 
 turn-major trace는 delayed prefix reuse를 의도적으로 만든 victim workload다. 이 효과가 trace ordering 때문인지 확인하려면 같은 conversation/turn 조건에서 `conversation-major` control을 생성한다.
 
@@ -533,14 +705,14 @@ source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 --rag-qps 5.0 \
   --max-concurrency 64 \
   --num-chat-prompts 900 --num-rag-prompts 900 \
   --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
+  --output results/mixed_chat5_rag5_conversation_major_longctx1500_util06.jsonl
 ```
 
 기대 결과:
@@ -550,16 +722,76 @@ python run_mixed.py \
 
 ---
 
-### 5.5 Optional: capacity sweep
+### 5.6 Utilization sweep: chat5/rag5 longctx1500
 
-같은 victim trace와 `chat5/rag5` 조건에서 `--gpu-memory-utilization`만 바꿔 cache pressure 민감도를 확인한다.
+같은 victim trace와 `chat5/rag5 longctx1500` 조건에서 `--gpu-memory-utilization`만 바꿔 cache pressure 민감도를 확인한다.
 
 | Utilization | 해석 |
 |---:|---|
+| 0.96 | cache 여유가 큰 기준선 |
 | 0.7 | cache 여유 증가 |
 | 0.6 | 기본 pressure |
 | 0.5 | 강한 pressure |
- 
+
+각 run마다 서버를 재시작하고 `UTIL`, `RUN_NAME`을 바꾼다.
+
+**Terminal 1 — util sweep 서버 템플릿:**
+
+```bash
+cd /home/ubuntu/vllm
+source /home/ubuntu/vllm/.venv/bin/activate
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
+
+# 아래 두 값만 run마다 바꾼다.
+UTIL=0.96
+RUN_NAME=mixed_chat5_rag5_longctx1500_util096
+
+mkdir -p /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_${RUN_NAME}.jsonl
+
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --enable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 8192 \
+  --gpu-memory-utilization ${UTIL} \
+  --port 8000
+```
+
+**Terminal 2 — util sweep 공통 클라이언트:**
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+mkdir -p results
+
+# Terminal 1의 RUN_NAME과 같은 이름을 사용한다.
+RUN_NAME=mixed_chat5_rag5_longctx1500_util096
+
+python run_mixed.py \
+  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --chat-qps 5.0 \
+  --rag-qps 5.0 \
+  --max-concurrency 64 \
+  --num-chat-prompts 900 \
+  --num-rag-prompts 900 \
+  --chat-slo-ms 500 \
+  --rag-slo-ms 2000 \
+  --output results/${RUN_NAME}.jsonl
+```
+
+실행할 util/run name:
+
+| Utilization | RUN_NAME |
+|---:|---|
+| 0.96 | `mixed_chat5_rag5_longctx1500_util096` |
+| 0.7 | `mixed_chat5_rag5_longctx1500_util07` |
+| 0.6 | `mixed_chat5_rag5_longctx1500_util06` |
+| 0.5 | `mixed_chat5_rag5_longctx1500_util05` |
+
 비교 지표:
 
 - 전체 `reused_later=true` 비율
@@ -688,17 +920,30 @@ hypothesis_validation/results/
 ├── rag_isolated_squad_qps5_apc_on_len8192_util06.jsonl
 ├── eviction_rag_isolated_squad_qps5_apc_on_len8192_util06.jsonl
 │
-├── mixed_chat5_rag5_apc_on_len8192_util06.jsonl
-├── eviction_mixed_chat5_rag5_apc_on_len8192_util06.jsonl
+├── mixed_chat5_rag5_longctx500_util06.jsonl
+├── eviction_mixed_chat5_rag5_longctx500_util06.jsonl
 │
-├── mixed_chat5_rag10_apc_on_len8192_util06.jsonl
-├── eviction_mixed_chat5_rag10_apc_on_len8192_util06.jsonl
+├── mixed_chat5_rag5_longctx1500_util06.jsonl
+├── eviction_mixed_chat5_rag5_longctx1500_util06.jsonl
 │
-├── mixed_chat5_rag15_apc_on_len8192_util06.jsonl
-├── eviction_mixed_chat5_rag15_apc_on_len8192_util06.jsonl
+├── mixed_chat5_rag5_longctx3000_util06.jsonl
+├── eviction_mixed_chat5_rag5_longctx3000_util06.jsonl
 │
-├── mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
-└── eviction_mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
+├── mixed_chat5_rag10_longctx1500_util06.jsonl
+├── eviction_mixed_chat5_rag10_longctx1500_util06.jsonl
+│
+├── mixed_chat5_rag15_longctx1500_util06.jsonl
+├── eviction_mixed_chat5_rag15_longctx1500_util06.jsonl
+│
+├── mixed_chat5_rag5_longctx1500_util096.jsonl
+├── eviction_mixed_chat5_rag5_longctx1500_util096.jsonl
+├── mixed_chat5_rag5_longctx1500_util07.jsonl
+├── eviction_mixed_chat5_rag5_longctx1500_util07.jsonl
+├── mixed_chat5_rag5_longctx1500_util05.jsonl
+├── eviction_mixed_chat5_rag5_longctx1500_util05.jsonl
+│
+├── mixed_chat5_rag5_conversation_major_longctx1500_util06.jsonl
+└── eviction_mixed_chat5_rag5_conversation_major_longctx1500_util06.jsonl
 ```
 
 ---
@@ -713,7 +958,8 @@ hypothesis_validation/results/
 - [ ] Case 3 실행 전 `VLLM_EVICTION_LOG` **절대 경로**로 설정되어 있는가 (상대 경로는 vLLM 실행 위치에 따라 달라짐)
 - [ ] Case 1, 2의 기준선 결과가 먼저 수집되었는가 (비교 기준 없이 Case 3만 실행하면 pollution 정량화 불가)
 - [ ] 각 run 사이에 vLLM 서버를 재시작했는가 (cache/queue 상태 초기화)
-- [ ] 동일 `--gpu-memory-utilization 0.6`으로 Case 1/2/3를 실행했는가 (조건 통제)
+- [ ] 비교 대상 run은 동일 `--gpu-memory-utilization`으로 실행했는가 (기본 pressure sweep은 `0.6`)
+- [ ] long RAG 실험은 `squad_validation_longctx500/1500/3000.jsonl` 중 의도한 trace를 사용했는가
 - [ ] RAG pressure sweep은 Chat QPS를 고정했는가 (`chat-qps 5.0`)
 - [ ] mixed run에서 `num_rag_prompts / rag_qps ~= num_chat_prompts / chat_qps`를 만족하는가 (`5:15`이면 `900/5 ~= 2700/15`)
 - [ ] ShareGPT victim trace가 `--min-turns 9 --max-turns 9 --num-conversations 100`처럼 같은 `conversation_id`를 여러 turn에 걸쳐 포함하는가
