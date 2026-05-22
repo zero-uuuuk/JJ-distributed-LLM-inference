@@ -376,7 +376,7 @@ source /home/ubuntu/vllm/.venv/bin/activate
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 
 # eviction log 절대 경로 지정 (서버 시작 전 설정 필수)
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_5_5_apc_on_len8192.jsonl
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_chat5_rag5_apc_on_len8192_util06.jsonl
 
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -398,14 +398,14 @@ python run_mixed.py \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 10.0 \
-  --rag-qps 10.0 \
+  --chat-qps 5.0 \
+  --rag-qps 5.0 \
   --max-concurrency 64 \
   --num-chat-prompts 900 \
   --num-rag-prompts 900 \
   --chat-slo-ms 500 \
   --rag-slo-ms 2000 \
-  --output results/mixed_5_5_apc_on_len8192.jsonl
+  --output results/mixed_chat5_rag5_apc_on_len8192_util06.jsonl
 ```
 
 **측정 지표**: Case 1/2와 동일 + pollution metrics (§6). 특히
@@ -425,103 +425,84 @@ pollution은 cache 크기가 working set보다 작을 때만 발생한다. `--gp
 
 ---
 
-### 5.2 Workload mix ratio sweep (§5.3 대응)
+### 5.2 Chat-fixed RAG pressure sweep (§5.3 대응)
 
-mix ratio 실험은 **총 QPS를 20으로 고정**하고 Chat/RAG 비율만 바꾼다. 이렇게 해야 전체 load는 유지한 채 workload composition의 효과를 비교할 수 있다.
+pollution 인과를 보려면 Chat victim의 arrival rate를 고정하고 RAG pressure만 증가시킨다. 단순 ratio sweep은 Chat QPS와 RAG QPS가 동시에 바뀌므로, Chat load 감소 효과와 RAG pressure 증가 효과가 섞인다.
 
-| 실험 | Chat QPS | RAG QPS | 목적 |
-|---|---:|---:|---|
-| Mixed 5:5 | 10 | 10 | balanced baseline |
-| Mixed 7:3 | 14 | 6 | Chat-heavy: `chat-chat` self-interference 확인 |
-| Mixed 3:7 | 6 | 14 | RAG-heavy: `chat-rag` useful eviction 증가 여부 확인 |
+특히 mixed run에서는 두 workload가 같은 시간 동안 함께 떠 있어야 한다. 이를 위해 요청 수와 QPS의 비율을 맞춘다.
 
-모든 실험은 victim trace `sharegpt_turn_major_100conv_9turn.jsonl`와 SQuAD trace `squad_validation.jsonl`을 사용하고, workload별 900 requests를 전송한다.
+```text
+num_rag_prompts / rag_qps ~= num_chat_prompts / chat_qps
+```
+
+예를 들어 Chat을 `900 requests / 5 QPS = 180s` 동안 보내면, RAG도 약 180초 동안 도착하도록 `num-rag-prompts`를 정한다.
+
+| 실험 | Chat QPS | RAG QPS | Chat requests | RAG requests | 예상 도착 구간 | 목적 |
+|---|---:|---:|---:|---:|---:|---|
+| Chat-only | 5 | 0 | 900 | 0 | 180s | isolated victim baseline |
+| Mixed 5:5 | 5 | 5 | 900 | 900 | 180s | balanced pressure baseline |
+| Mixed 5:10 | 5 | 10 | 900 | 1800 | 180s | medium RAG pressure |
+| Mixed 5:15 | 5 | 15 | 900 | 2700 | 180s | strong RAG pressure |
+
+`--rag-qps 10 --num-rag-prompts 900`처럼 실행하면 RAG가 약 90초 만에 끝난다. 이 경우 Chat 후반 turn은 RAG pressure 없이 실행될 수 있으므로 pressure sweep으로 해석하지 않는다.
+
+각 run은 서버를 재시작하고 `VLLM_EVICTION_LOG`를 새 파일명으로 지정한 뒤 실행한다.
+
+**Terminal 1 — 5:15 서버:**
+
+```bash
+cd /home/ubuntu/vllm
+source /home/ubuntu/vllm/.venv/bin/activate
+
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
+
+mkdir -p /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_chat5_rag15_apc_on_len8192_util06.jsonl
+
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --enable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.6 \
+  --port 8000
+```
+
+**Terminal 2 — 5:15 클라이언트:**
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+mkdir -p results
 
-# Chat:RAG = 5:5, total QPS = 20
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_5_5_apc_on_len8192.jsonl
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 10.0 --rag-qps 10.0 \
+  --chat-qps 5.0 \
+  --rag-qps 15.0 \
   --max-concurrency 64 \
-  --num-chat-prompts 900 --num-rag-prompts 900 \
-  --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_5_5_apc_on_len8192.jsonl
-
-# Chat:RAG = 7:3
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_7_3_apc_on_len8192.jsonl
-python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
-  --url http://127.0.0.1:8000/v1/chat/completions \
-  --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 14.0 --rag-qps 6.0 \
-  --max-concurrency 64 \
-  --num-chat-prompts 900 --num-rag-prompts 900 \
-  --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_7_3_apc_on_len8192.jsonl
-
-# Chat:RAG = 3:7
-export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_mixed_3_7_apc_on_len8192.jsonl
-python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
-  --url http://127.0.0.1:8000/v1/chat/completions \
-  --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 6.0 --rag-qps 14.0 \
-  --max-concurrency 64 \
-  --num-chat-prompts 900 --num-rag-prompts 900 \
-  --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_3_7_apc_on_len8192.jsonl
+  --num-chat-prompts 900 \
+  --num-rag-prompts 2700 \
+  --chat-slo-ms 500 \
+  --rag-slo-ms 2000 \
+  --output results/mixed_chat5_rag15_apc_on_len8192_util06.jsonl
 ```
 
-> **주의**: `VLLM_EVICTION_LOG`는 vLLM 서버 프로세스가 읽는 환경변수다. 실제 실행에서는 각 run마다 서버를 재시작하면서 Terminal 1에서 해당 값을 설정하는 것을 권장한다. 위 명령은 결과 파일명 convention을 명시하기 위한 예시다.
+비교 지표:
+
+- RAG QPS 증가에 따른 `UsefulCrossEviction(chat ← RAG)` count/rate
+- Chat turn별 token-weighted hit drop
+- Chat turn별 TTFT p95 / SLO attainment drop
+- RAG SLO가 유지되는지 여부
 
 ---
 
-### 5.3 Stress matrix: 1:9 / 9:1
+### 5.3 Optional: ratio sweep
 
-primary matrix에서 경향이 약하면 total QPS 20을 유지한 채 extreme mix를 추가한다.
+Chat:RAG ratio sweep (`7:3`, `3:7`, `1:9`, `9:1`)은 보조 실험으로만 사용한다. ratio sweep은 workload composition의 효과를 보는 데는 유용하지만, Chat QPS도 함께 변하므로 RAG pressure의 인과를 단독으로 보여주기 어렵다.
 
-| 실험 | Chat QPS | RAG QPS | 목적 |
-|---|---:|---:|---|
-| Mixed 9:1 | 18 | 2 | Chat-heavy stress: Chat self-eviction upper bound |
-| Mixed 1:9 | 2 | 18 | RAG-heavy stress: RAG-triggered Chat useful eviction 확인 |
-
-```bash
-cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
-source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
-
-# Chat:RAG = 9:1, total QPS = 20
-python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
-  --url http://127.0.0.1:8000/v1/chat/completions \
-  --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 18.0 --rag-qps 2.0 \
-  --max-concurrency 64 \
-  --num-chat-prompts 900 --num-rag-prompts 900 \
-  --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_9_1_apc_on_len8192.jsonl
-
-# Chat:RAG = 1:9, total QPS = 20
-python run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation.jsonl \
-  --url http://127.0.0.1:8000/v1/chat/completions \
-  --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 2.0 --rag-qps 18.0 \
-  --max-concurrency 64 \
-  --num-chat-prompts 900 --num-rag-prompts 900 \
-  --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_1_9_apc_on_len8192.jsonl
-```
+ratio sweep을 수행할 때도 각 workload가 비슷한 시간 동안 실행되도록 `num_prompts / qps`를 맞춘다.
 
 ---
 
@@ -544,7 +525,7 @@ python build_sharegpt_workload.py \
   --output sharegpt_conversation_major_100conv_9turn.jsonl
 ```
 
-5:5 control 실행:
+chat5/rag5 control 실행:
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
@@ -555,11 +536,11 @@ python run_mixed.py \
   --rag-trace ../workloads/squad/squad_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 10.0 --rag-qps 10.0 \
+  --chat-qps 5.0 --rag-qps 5.0 \
   --max-concurrency 64 \
   --num-chat-prompts 900 --num-rag-prompts 900 \
   --chat-slo-ms 500 --rag-slo-ms 2000 \
-  --output results/mixed_5_5_conversation_major_apc_on_len8192.jsonl
+  --output results/mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
 ```
 
 기대 결과:
@@ -571,7 +552,7 @@ python run_mixed.py \
 
 ### 5.5 Optional: capacity sweep
 
-같은 victim trace와 5:5 total QPS 20 조건에서 `--gpu-memory-utilization`만 바꿔 cache pressure 민감도를 확인한다.
+같은 victim trace와 `chat5/rag5` 조건에서 `--gpu-memory-utilization`만 바꿔 cache pressure 민감도를 확인한다.
 
 | Utilization | 해석 |
 |---:|---|
@@ -701,26 +682,23 @@ Pollution_SLODrop(chat) = SLOAttainment_chat^isolated  −  SLOAttainment_chat^m
 
 ```
 hypothesis_validation/results/
-├── chat_isolated_apc_on_len8192.jsonl          # Case 1: Chat-only 요청 결과
-├── rag_isolated_apc_on_len8192.jsonl           # Case 2: RAG-only 요청 결과
+├── chat_isolated_turn9_qps5_apc_on_len8192_util06.jsonl
+├── eviction_chat_isolated_turn9_qps5_apc_on_len8192_util06.jsonl
 │
-├── mixed_5_5_apc_on_len8192.jsonl              # Case 3 (5:5): 혼합 요청 결과
-├── eviction_mixed_5_5_apc_on_len8192.jsonl     # Case 3 (5:5): vLLM eviction 로그
+├── rag_isolated_squad_qps5_apc_on_len8192_util06.jsonl
+├── eviction_rag_isolated_squad_qps5_apc_on_len8192_util06.jsonl
 │
-├── mixed_7_3_apc_on_len8192.jsonl              # mix sweep: Chat 7 : RAG 3
-├── eviction_mixed_7_3_apc_on_len8192.jsonl
+├── mixed_chat5_rag5_apc_on_len8192_util06.jsonl
+├── eviction_mixed_chat5_rag5_apc_on_len8192_util06.jsonl
 │
-├── mixed_3_7_apc_on_len8192.jsonl              # mix sweep: Chat 3 : RAG 7
-├── eviction_mixed_3_7_apc_on_len8192.jsonl
+├── mixed_chat5_rag10_apc_on_len8192_util06.jsonl
+├── eviction_mixed_chat5_rag10_apc_on_len8192_util06.jsonl
 │
-├── mixed_9_1_apc_on_len8192.jsonl              # stress: Chat-heavy
-├── eviction_mixed_9_1_apc_on_len8192.jsonl
+├── mixed_chat5_rag15_apc_on_len8192_util06.jsonl
+├── eviction_mixed_chat5_rag15_apc_on_len8192_util06.jsonl
 │
-├── mixed_1_9_apc_on_len8192.jsonl              # stress: RAG-heavy
-├── eviction_mixed_1_9_apc_on_len8192.jsonl
-│
-├── mixed_5_5_conversation_major_apc_on_len8192.jsonl
-└── eviction_mixed_5_5_conversation_major_apc_on_len8192.jsonl
+├── mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
+└── eviction_mixed_chat5_rag5_conversation_major_apc_on_len8192_util06.jsonl
 ```
 
 ---
@@ -736,7 +714,8 @@ hypothesis_validation/results/
 - [ ] Case 1, 2의 기준선 결과가 먼저 수집되었는가 (비교 기준 없이 Case 3만 실행하면 pollution 정량화 불가)
 - [ ] 각 run 사이에 vLLM 서버를 재시작했는가 (cache/queue 상태 초기화)
 - [ ] 동일 `--gpu-memory-utilization 0.6`으로 Case 1/2/3를 실행했는가 (조건 통제)
-- [ ] mix ratio sweep은 총 QPS 20으로 고정했는가 (`10:10`, `14:6`, `6:14`)
+- [ ] RAG pressure sweep은 Chat QPS를 고정했는가 (`chat-qps 5.0`)
+- [ ] mixed run에서 `num_rag_prompts / rag_qps ~= num_chat_prompts / chat_qps`를 만족하는가 (`5:15`이면 `900/5 ~= 2700/15`)
 - [ ] ShareGPT victim trace가 `--min-turns 9 --max-turns 9 --num-conversations 100`처럼 같은 `conversation_id`를 여러 turn에 걸쳐 포함하는가
 - [ ] `--num-chat-prompts`가 turn 1만 자르지 않는가 (`100conv × 9turn`이면 900 권장)
 - [ ] `--num-prompts` 가 충분히 큰가 (victim trace 기준 900 per workload 권장)
