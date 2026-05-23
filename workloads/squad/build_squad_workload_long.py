@@ -19,7 +19,13 @@ DEFAULT_DATASET_NAME = "squad"
 DEFAULT_SPLIT = "validation"
 
 
+# ---------------------------------------------------------------------------
+# JSON 입출력
+# ---------------------------------------------------------------------------
+
+
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """dict 리스트를 run_trace.py / run_mixed.py용 JSONL 파일로 저장한다."""
     resolved_path = path.expanduser().resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -28,7 +34,13 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             output_file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+# ---------------------------------------------------------------------------
+# CLI 처리
+# ---------------------------------------------------------------------------
+
+
 def parse_args() -> argparse.Namespace:
+    """Long-context SQuAD RAG workload 생성에 필요한 CLI 인자를 파싱한다."""
     parser = argparse.ArgumentParser(
         description="SQuAD를 long RAG-like JSONL workload로 변환합니다.",
     )
@@ -61,7 +73,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# 데이터 로드
+# ---------------------------------------------------------------------------
+
+
 def load_dataset_rows(dataset_name: str, split: str) -> list[dict[str, Any]]:
+    """Hugging Face datasets에서 SQuAD row를 로드한다."""
     try:
         from datasets import load_dataset
     except ImportError as exc:
@@ -71,6 +89,11 @@ def load_dataset_rows(dataset_name: str, split: str) -> list[dict[str, Any]]:
 
     dataset = load_dataset(dataset_name, split=split)
     return [dict(row) for row in dataset]
+
+
+# ---------------------------------------------------------------------------
+# 길이 추정과 context 수집
+# ---------------------------------------------------------------------------
 
 
 def approximate_tokens(text: str) -> int:
@@ -103,6 +126,7 @@ def collect_contexts(
         if not context or context in seen:
             continue
 
+        # 중복 passage를 피해서 같은 prompt 안에서 불필요한 반복을 줄인다.
         contexts.append(context)
         seen.add(context)
 
@@ -113,7 +137,13 @@ def collect_contexts(
     return contexts
 
 
+# ---------------------------------------------------------------------------
+# 프롬프트 구성
+# ---------------------------------------------------------------------------
+
+
 def format_passages(contexts: list[str]) -> str:
+    """여러 SQuAD context를 Passage 1, Passage 2, ... 형태로 직렬화한다."""
     parts: list[str] = []
     for index, context in enumerate(contexts, start=1):
         parts.append(f"Passage {index}:\n{context}")
@@ -137,6 +167,8 @@ def expand_to_target_tokens(
     offset = len(contexts)
 
     while True:
+        # 실제 tokenizer가 아니라 빠른 whitespace count로 목표 길이에 도달했는지 확인한다.
+        # 정확한 토큰 수는 실험 결과 JSONL의 prompt_tokens를 최종 기준으로 본다.
         prompt = build_prompt_from_contexts(contexts, question)
         if approximate_tokens(prompt) >= target_prompt_tokens:
             return contexts
@@ -158,6 +190,7 @@ def expand_to_target_tokens(
 
 
 def build_prompt_from_contexts(contexts: list[str], question: str) -> str:
+    """multi-passage RAG prompt를 Chat Completions user message 본문으로 만든다."""
     passages = format_passages(contexts)
     return (
         "You are a question answering assistant. "
@@ -168,7 +201,13 @@ def build_prompt_from_contexts(contexts: list[str], question: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# JSONL row 생성
+# ---------------------------------------------------------------------------
+
+
 def first_answer_text(row: dict[str, Any]) -> str:
+    """SQuAD answers dict에서 첫 번째 정답 문자열만 보조 metadata로 추출한다."""
     answers = row.get("answers") or {}
     texts = answers.get("text") or []
     if texts:
@@ -184,6 +223,7 @@ def build_request(
     target_prompt_tokens: int,
     context_stride: int,
 ) -> dict[str, Any]:
+    """SQuAD row 하나를 long-context RAG 요청 하나로 변환한다."""
     question = str(row.get("question", "")).strip()
     base_contexts = collect_contexts(
         rows=rows,
@@ -201,6 +241,7 @@ def build_request(
     prompt = build_prompt_from_contexts(contexts, question)
 
     return {
+        # run_trace.py / run_mixed.py가 식별할 요청 ID와 OpenAI-compatible 입력.
         "request_id": f"squad-rag-{row_index:06d}",
         "messages": [
             {
@@ -210,6 +251,7 @@ def build_request(
         ],
         "prompt": prompt,
         "output_text": first_answer_text(row),
+        # 분석과 sanity check를 위한 workload metadata.
         "source_dataset": "SQuAD",
         "cache_pattern": "long_rag",
         "question": question,
@@ -227,6 +269,7 @@ def build_requests(
     target_prompt_tokens: int,
     context_stride: int,
 ) -> list[dict[str, Any]]:
+    """선택된 SQuAD row들을 long-context RAG JSONL row 목록으로 변환한다."""
     if num_requests <= 0:
         selected_count = len(rows)
     else:
@@ -248,7 +291,13 @@ def build_requests(
     return requests
 
 
+# ---------------------------------------------------------------------------
+# 엔트리포인트
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
+    """SQuAD 기반 long-context RAG workload JSONL을 생성한다."""
     args = parse_args()
     rows = load_dataset_rows(
         dataset_name=args.dataset_name,

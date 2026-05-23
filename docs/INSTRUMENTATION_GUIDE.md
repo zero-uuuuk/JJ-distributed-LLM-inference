@@ -254,6 +254,37 @@ python build_squad_workload.py \
   --output squad_validation.jsonl
 ```
 
+긴 RAG pressure 실험에서는 SQuAD context paragraph를 여러 개 이어 붙인 long-context trace를 사용한다 (`workloads/squad/build_squad_workload_long.py`). `--target-prompt-tokens`만 바꿔 500, 1500, 3000 token급 trace를 만든다.
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python build_squad_workload_long.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 8 \
+  --target-prompt-tokens 500 \
+  --output squad_validation_longctx_500.jsonl
+
+python build_squad_workload_long.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 8 \
+  --target-prompt-tokens 1500 \
+  --output squad_validation_longctx_1500.jsonl
+
+python build_squad_workload_long.py \
+  --dataset-name squad \
+  --split validation \
+  --num-requests 5000 \
+  --num-contexts 16 \
+  --target-prompt-tokens 3000 \
+  --output squad_validation_longctx_3000.jsonl
+```
+
 Chat trace는 ShareGPT를 사용한다. cache pollution의 victim을 만들려면 같은
 `conversation_id`가 turn 1부터 turn 9까지 반복 등장해야 한다. 따라서 turn 수가
 충분한 conversation만 고르고, `turn-major` 순서로 저장한다.
@@ -300,6 +331,11 @@ cd /home/ubuntu/vllm
 source /home/ubuntu/vllm/.venv/bin/activate
 
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/home/ubuntu/vllm/.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
+
+# eviction log 절대 경로 지정 (서버 시작 전 설정 필수)
+# turn-level 기준선 비교용으로 isolated run도 별도 파일에 기록한다.
+mkdir -p /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results
+export VLLM_EVICTION_LOG=/home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation/results/eviction_chat_isolated_turn9_qps5_apc_on_len8192_util06.jsonl
 
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -395,7 +431,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -462,29 +498,29 @@ SQuAD context paragraph를 여러 개 이어 붙여 RAG-like long prompt를 만�
 cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/squad
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
-python build_squad_workload.py \
+python build_squad_workload_long.py \
   --dataset-name squad \
   --split validation \
   --num-requests 5000 \
   --num-contexts 8 \
   --target-prompt-tokens 500 \
-  --output squad_validation_longctx500.jsonl
+  --output squad_validation_longctx_500.jsonl
 
-python build_squad_workload.py \
+python build_squad_workload_long.py \
   --dataset-name squad \
   --split validation \
   --num-requests 5000 \
   --num-contexts 8 \
   --target-prompt-tokens 1500 \
-  --output squad_validation_longctx1500.jsonl
+  --output squad_validation_longctx_1500.jsonl
 
-python build_squad_workload.py \
+python build_squad_workload_long.py \
   --dataset-name squad \
   --split validation \
   --num-requests 5000 \
-  --num-contexts 16 \
+  --num-contexts 8 \
   --target-prompt-tokens 3000 \
-  --output squad_validation_longctx3000.jsonl
+  --output squad_validation_longctx_3000.jsonl
 ```
 
 생성 후 실제 tokenizer 기준 길이는 vLLM 결과의 `prompt_tokens`로 확인한다.
@@ -535,7 +571,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -566,7 +602,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -597,7 +633,7 @@ mkdir -p results
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -622,7 +658,7 @@ RUN_NAME=mixed_chat5_rag5_longctx500_util06
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 --rag-qps 5.0 \
@@ -636,7 +672,7 @@ RUN_NAME=mixed_chat5_rag5_longctx1500_util06
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 --rag-qps 5.0 \
@@ -650,7 +686,7 @@ RUN_NAME=mixed_chat5_rag5_longctx3000_util06
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx3000.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_3000.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 --rag-qps 5.0 \
@@ -678,7 +714,7 @@ ratio sweep을 수행할 때도 각 workload가 비슷한 시간 동안 실행�
 
 ---
 
-### 5.5 Control: conversation-major Chat trace
+### 5.5 Control: conversation-major Chat trace <- 아직 안함!!!>
 
 turn-major trace는 delayed prefix reuse를 의도적으로 만든 victim workload다. 이 효과가 trace ordering 때문인지 확인하려면 같은 conversation/turn 조건에서 `conversation-major` control을 생성한다.
 
@@ -705,7 +741,7 @@ source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_conversation_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 --rag-qps 5.0 \
@@ -770,7 +806,7 @@ RUN_NAME=mixed_chat5_rag5_longctx1500_util096
 
 python run_mixed.py \
   --chat-trace ../workloads/sharegpt/sharegpt_turn_major_100conv_9turn.jsonl \
-  --rag-trace ../workloads/squad/squad_validation_longctx1500.jsonl \
+  --rag-trace ../workloads/squad/squad_validation_longctx_1500.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
   --chat-qps 5.0 \
@@ -959,7 +995,7 @@ hypothesis_validation/results/
 - [ ] Case 1, 2의 기준선 결과가 먼저 수집되었는가 (비교 기준 없이 Case 3만 실행하면 pollution 정량화 불가)
 - [ ] 각 run 사이에 vLLM 서버를 재시작했는가 (cache/queue 상태 초기화)
 - [ ] 비교 대상 run은 동일 `--gpu-memory-utilization`으로 실행했는가 (기본 pressure sweep은 `0.6`)
-- [ ] long RAG 실험은 `squad_validation_longctx500/1500/3000.jsonl` 중 의도한 trace를 사용했는가
+- [ ] long RAG 실험은 `squad_validation_longctx_500.jsonl`, `squad_validation_longctx_1500.jsonl`, `squad_validation_longctx_3000.jsonl` 중 의도한 trace를 사용했는가
 - [ ] RAG pressure sweep은 Chat QPS를 고정했는가 (`chat-qps 5.0`)
 - [ ] mixed run에서 `num_rag_prompts / rag_qps ~= num_chat_prompts / chat_qps`를 만족하는가 (`5:15`이면 `900/5 ~= 2700/15`)
 - [ ] ShareGPT victim trace가 `--min-turns 9 --max-turns 9 --num-conversations 100`처럼 같은 `conversation_id`를 여러 turn에 걸쳐 포함하는가
