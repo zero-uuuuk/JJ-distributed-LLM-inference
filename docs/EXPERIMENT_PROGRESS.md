@@ -262,6 +262,68 @@ longctx1500에서는 RAG 자체도 무거워져 RAG SLO가 약 85.6%까지 하�
 
 ---
 
+### 2.7 Capacity sweep
+
+동일한 `chat5/rag5 longctx1500` 조건에서 KV capacity/utilization을 낮추며 pressure를 키웠다.
+
+| util | Chat token hit | Chat TTFT P95 | Chat SLO | RAG token hit | RAG TTFT P95 | RAG SLO | chat-rag useful eviction |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.96 | 47.84% | 0.82 s | 85.00% | 90.88% | 0.68 s | 100.00% | 2,819 |
+| 0.70 | 13.29% | 1.52 s | 78.56% | 90.88% | 0.94 s | 99.89% | 5,107 |
+| 0.60 | 7.55% | 3.65 s | 69.44% | 90.82% | 2.95 s | 85.56% | 6,266 |
+| 0.50 | 4.67% | 6.30 s | 63.00% | 90.63% | 5.70 s | 76.78% | 6,475 |
+
+해석:
+
+```text
+KV capacity가 줄어들수록 Chat cache locality가 빠르게 붕괴한다.
+RAG token hit은 약 90% 수준을 유지하지만, Chat SLO와 RAG SLO 모두 tail latency 악화로 하락한다.
+특히 chat-rag useful eviction이 capacity pressure와 함께 증가해 cross-workload interference를 직접 보여준다.
+```
+
+---
+
+### 2.8 RAG context length sweep
+
+RAG context 길이를 `ctx500`, `ctx1500`, `ctx3000`으로 늘리며 shared KV cache interference가 어떻게 커지는지 확인했다.
+
+| label | RAG avg prompt tokens | Chat token hit | Chat TTFT P95 | Chat SLO | RAG token hit | RAG TTFT P95 | RAG SLO | chat-rag useful eviction | RAG share of useful Chat evictions |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ctx500 | 1,259 | 7.69% | 3.26 s | 73.33% | 90.17% | 2.72 s | 91.22% | 4,520 | 15.90% |
+| ctx1500 | 2,096 | 7.55% | 3.65 s | 69.44% | 90.82% | 2.95 s | 85.56% | 6,266 | 21.91% |
+| ctx3000 | 4,088 | 5.72% | 6.06 s | 54.78% | 91.22% | 5.02 s | 77.67% | 8,724 | 30.84% |
+
+해석:
+
+```text
+RAG context가 길어질수록 useful chat->RAG eviction이 거의 선형적으로 증가한다.
+그 결과 Chat SLO는 73.33% -> 54.78%로 떨어지고, TTFT P95는 3.26s -> 6.06s로 악화된다.
+RAG 자체 hit rate는 오히려 약간 높아지므로, raw hit rate만으로는 피해 workload의 SLO 악화를 설명하기 어렵다.
+```
+
+---
+
+### 2.9 Turn-level SLO and TTFT tail
+
+turn별로 보면 평균 지표보다 더 강한 신호가 나온다. 특히 later turn에서 prefix reuse가 필요해지는 순간, 이전에 밀려난 Chat KV block의 피해가 TTFT tail로 드러난다.
+
+| label | Turn 6 SLO | Turn 7 SLO | Turn 8 SLO | Turn 9 SLO | Turn 9 TTFT P95 |
+|---|---:|---:|---:|---:|---:|
+| isolated | 99% | 83% | 41% | 9% | 3.86 s |
+| ctx500 | 97% | 63% | 0% | 0% | 7.47 s |
+| ctx1500 | 76% | 50% | 1% | 0% | 7.32 s |
+| ctx3000 | 37% | 5% | 0% | 0% | 8.24 s |
+
+해석:
+
+```text
+interference는 early turn보다 later turn에서 훨씬 뚜렷하다.
+ctx3000은 turn 6부터 SLO가 37%까지 떨어지고, turn 7 이후에는 사실상 SLO를 만족하지 못한다.
+이는 QuataCache가 보호해야 할 대상이 단순히 현재 hit rate가 낮은 block이 아니라 future-reusable Chat prefix block임을 보여준다.
+```
+
+---
+
 ## 3. 현재 결론
 
 ```text
@@ -271,6 +333,9 @@ longctx1500에서는 RAG 자체도 무거워져 RAG SLO가 약 85.6%까지 하�
 4. ratio sweep은 Chat QPS가 같이 변해서 인과 해석이 어렵다.
 5. pressure sweep은 Chat QPS 고정 + duration matching이 필요하다.
 6. RAG prompt length를 늘리면 chat-rag useful eviction과 Chat later-turn SLO degradation이 강해진다.
+7. capacity pressure가 커질수록 Chat cache locality와 Chat/RAG SLO가 함께 악화된다.
+8. RAG context length가 길어질수록 useful Chat eviction 중 RAG가 차지하는 비중이 15.90% -> 30.84%로 증가한다.
+9. 평균 지표보다 turn-level later-turn SLO/TTFT tail에서 QuataCache 문제 정의가 가장 선명하게 드러난다.
 ```
 
 이 결과는 다음 주장을 뒷받침한다.
@@ -281,48 +346,80 @@ Raw hit rate degradation만으로 serving 품질 저하를 설명할 수 없다.
 그 결과 SLO-sensitive later turn에서 TTFT/SLO가 악화되는지이다.
 ```
 
+현재까지의 판정:
+
+```text
+가설 방향성 검증은 성공했다.
+RAG가 shared KV cache에서 Chat의 future-reusable prefix block을 밀어내고,
+그 결과 multi-turn Chat의 later-turn TTFT tail과 SLO가 악화된다는 신호가 일관되게 관찰된다.
+
+다만 논문급 causal proof로 만들려면 seed 반복, confidence interval,
+no-RAG same-load baseline, cache policy 대조군을 추가하면 더 단단해진다.
+```
+
 ---
 
 ## 4. 다음 실험
 
-다음은 `longctx1500` RAG로 duration matching을 적용한 `chat5/rag10` 실험을 수행한다.
+핵심 가설은 현재 결과로 충분히 지지된다. 다음 단계는 "가설 발견"보다 "causal proof 강화"와 "QuataCache 개선 효과 입증"에 가깝다.
+
+### 4.1 반복 실험과 confidence interval
+
+동일 조건을 seed만 바꿔 3회 이상 반복한다.
 
 ```text
-chat5/rag10 longctx1500:
-  --num-chat-prompts 900
-  --num-rag-prompts 1800
+권장 조건:
+  isolated chat5
+  chat5/rag5 ctx500
+  chat5/rag5 ctx1500
+  chat5/rag5 ctx3000
+
+확인 지표:
+  Chat SLO
+  Chat TTFT P95
+  turn 6/7/8/9 SLO
+  chat-rag useful eviction
+  RAG share of useful Chat evictions
 ```
 
-실행 목적:
+### 4.2 no-RAG same-load baseline
+
+RAG 대신 같은 token volume을 만드는 non-reusable synthetic workload를 넣어 compute pressure와 KV eviction pressure를 분리한다.
 
 ```text
-RAG prompt length가 긴 상태에서 RAG QPS를 5 -> 10으로 올렸을 때,
-chat-rag useful eviction과 Chat turn 7/8/9 SLODrop이 더 증가하는지 확인한다.
+목적:
+  RAG context length 증가로 인한 단순 compute load 증가와
+  shared KV cache eviction으로 인한 Chat prefix loss를 분리한다.
 ```
 
-주의:
+### 4.3 cache policy 대조군
+
+baseline shared LRU와 QuataCache-style policy를 같은 workload에서 비교한다.
 
 ```text
-RAG 1800 / 10 QPS ~= 180s
-Chat 900 / 5 QPS ~= 180s
+비교군:
+  shared LRU
+  workload-aware partition
+  Chat prefix pinning or priority
+  QuataCache policy
 
-따라서 두 workload가 비슷한 시간 동안 같이 실행된다.
+성공 기준:
+  Chat later-turn SLO 회복
+  Chat TTFT P95 tail 감소
+  RAG SLO sacrifice가 과도하지 않음
+  useful cross-workload eviction 감소
 ```
 
-이후 여유가 있으면 다음 실험을 추가한다.
+### 4.4 correlation/regression summary
+
+eviction attribution과 TTFT/SLO 사이의 관계를 표로 정리한다.
 
 ```text
-chat5/rag15 longctx1500:
-  --num-chat-prompts 900
-  --num-rag-prompts 2700
+분석:
+  chat-rag useful eviction vs Chat TTFT P95
+  RAG share of useful Chat evictions vs later-turn SLO
+  RAG avg prompt tokens vs cross-workload eviction ratio
+
+목적:
+  그래프 해석을 정성 주장에 그치지 않고 정량 근거로 보강한다.
 ```
-
-확인할 흐름:
-
-```text
-RAG QPS 증가
--> chat-rag useful eviction 증가
--> Chat turn 7/8/9 SLODrop 증가
-```
-
-이 흐름이 관찰되면 QuataCache의 문제 정의가 훨씬 강해진다.
