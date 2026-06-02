@@ -5,6 +5,9 @@ aiohttp==3.13.5
 datasets==4.8.5
 huggingface-hub==1.14.0
 
+# output_token_len 계산용 tokenizer (ShareGPT 워크로드)
+transformers==5.9.0
+
 # 수치 계산, 진행률 표시, 분석/시각화 보조
 matplotlib==3.10.9
 numpy==2.4.4
