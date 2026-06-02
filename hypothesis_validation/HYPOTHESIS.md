@@ -113,7 +113,8 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 
 - `APC_gain_single = single(OFF) − single(ON)`
 - `APC_gain_mixed  = mixed(OFF)  − mixed(ON)`
-- **`APC_gain_mixed < APC_gain_single` 이면**, scheduling/batching 손해(이미 OFF/ON 양쪽에 공통으로 반영됨)와 분리된 **cache-specific 손해**를 정량화한 것이다. 이것이 Case 1의 진짜 결론이다.
+- 같은 workload 조건에서 APC ON/OFF만 바꿔 비교하면 scheduling/batching 효과는 대부분 공통으로 반영되므로, `APC OFF - APC ON`은 해당 조건에서 prefix cache가 제공한 이득을 근사한다.
+- **`APC_gain_mixed < APC_gain_single` 이면**, mixed workload에서 prefix cache의 이득이 single workload만큼 유지되지 않는다는 뜻이다.
 
 이 비교에서 함께 보는 것:
 
