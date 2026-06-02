@@ -73,7 +73,7 @@ cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python case1_validation/run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_victim_200conv_5turn.jsonl \
+  --chat-trace ../workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --rag-trace ../workloads/msmarco/msmarco_v21_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -82,8 +82,8 @@ python case1_validation/run_mixed.py \
   --max-concurrency 32 \
   --num-chat-prompts 1000 \
   --num-rag-prompts 1000 \
-  --chat-slo-ms 500 \
-  --rag-slo-ms 2000 \
+  --chat-slo-ms 400 \
+  --rag-slo-ms 400 \
   --output case1_validation/raw_results/mixed_5_5_apc_on_len8192.jsonl
 ```
 
@@ -94,7 +94,7 @@ python case1_validation/run_mixed.py \
 
 ```bash
 python case1_validation/run_mixed.py \
-  --chat-trace ../workloads/sharegpt/sharegpt_victim_200conv_5turn.jsonl \
+  --chat-trace ../workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --rag-trace ../workloads/msmarco/msmarco_v21_validation.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -103,8 +103,8 @@ python case1_validation/run_mixed.py \
   --max-concurrency 32 \
   --num-chat-prompts 1000 \
   --num-rag-prompts 1000 \
-  --chat-slo-ms 500 \
-  --rag-slo-ms 2000 \
+  --chat-slo-ms 400 \
+  --rag-slo-ms 400 \
   --output case1_validation/raw_results/mixed_5_5_apc_off_len8192.jsonl
 ```
 

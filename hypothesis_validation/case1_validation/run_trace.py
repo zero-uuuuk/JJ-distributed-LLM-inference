@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
         "--slo-ms",
         type=float,
         default=None,
-        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=500, rag=2000)",
+        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=400, rag=400)",
     )
     return parser.parse_args()
 

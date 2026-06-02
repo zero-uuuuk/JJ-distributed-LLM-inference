@@ -72,7 +72,7 @@ cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python case1_validation/run_trace.py \
-  --trace ../workloads/sharegpt/sharegpt_victim_200conv_5turn.jsonl \
+  --trace ../workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -80,7 +80,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 500 \
+  --slo-ms 400 \
   --output case1_validation/raw_results/chat_only_apc_on.jsonl
 ```
 
@@ -91,7 +91,7 @@ python case1_validation/run_trace.py \
 
 ```bash
 python case1_validation/run_trace.py \
-  --trace ../workloads/sharegpt/sharegpt_victim_200conv_5turn.jsonl \
+  --trace ../workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -99,7 +99,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 500 \
+  --slo-ms 400 \
   --output case1_validation/raw_results/chat_only_apc_off.jsonl
 ```
 
@@ -123,7 +123,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 2000 \
+  --slo-ms 400 \
   --output case1_validation/raw_results/rag_only_apc_on.jsonl
 ```
 
@@ -142,7 +142,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 2000 \
+  --slo-ms 400 \
   --output case1_validation/raw_results/rag_only_apc_off.jsonl
 ```
 

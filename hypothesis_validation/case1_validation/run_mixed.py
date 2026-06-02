@@ -23,8 +23,8 @@ from tqdm import tqdm
 
 DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 DEFAULT_TIMEOUT_SECONDS = 1800
-DEFAULT_CHAT_SLO_MS = 500.0
-DEFAULT_RAG_SLO_MS = 2000.0
+DEFAULT_CHAT_SLO_MS = 400.0
+DEFAULT_RAG_SLO_MS = 400.0
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
@@ -36,7 +36,7 @@ DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
 CASE1_VALIDATION_DIR = Path(__file__).resolve().parent
 HYPOTHESIS_DIR = CASE1_VALIDATION_DIR.parent
 REPO_ROOT = HYPOTHESIS_DIR.parent
-DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_victim_200conv_5turn.jsonl"
+DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl"
 DEFAULT_RAG_TRACE = REPO_ROOT / "workloads/msmarco/msmarco_v21_validation.jsonl"
 DEFAULT_OUTPUT = CASE1_VALIDATION_DIR / "raw_results/mixed_5_5_apc_on_len8192.jsonl"
 
@@ -516,7 +516,7 @@ async def main_async(args: argparse.Namespace) -> None:
         args.chat_trace,
         "Chat",
         "  cd workloads/sharegpt && python build_sharegpt_workload.py "
-        "--output sharegpt_victim_200conv_5turn.jsonl",
+        "--output sharegpt_victim_100conv_10turn.jsonl",
     )
     rag_trace = resolve_trace_path(
         args.rag_trace,

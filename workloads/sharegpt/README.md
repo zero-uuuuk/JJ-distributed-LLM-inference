@@ -89,16 +89,16 @@ uv pip install -r requirements.txt
 ```bash
 cd workloads/sharegpt
 python build_sharegpt_workload.py \
-  --num-conversations 200 \
-  --min-turns 5 \
-  --max-turns 5 \
+  --num-conversations 100 \
+  --min-turns 10 \
+  --max-turns 10 \
   --order turn-major \
-  --output sharegpt_victim_200conv_5turn.jsonl
+  --output sharegpt_victim_100conv_10turn.jsonl
 ```
 
-`200 conversations × 5 turns = 1,000 requests` 구조입니다. `--min-turns 5`로 5턴 이상 대화만 고르고 `--max-turns 5`로 정확히 5턴으로 잘라 균일하게 맞춥니다.
+`100 conversations × 10 turns = 1,000 requests` 구조입니다. `--min-turns 10`으로 10턴 이상 대화만 고르고 `--max-turns 10`으로 정확히 10턴으로 잘라 균일하게 맞춥니다.
 
-turn-major라 `[모든 conv의 turn1] → [turn2] → … → [turn5]` 순으로 배치되어, 같은 대화의 재사용 간격(gap)이 약 200 요청이 됩니다. 이 gap이 think-time을 흉내내, RAG가 만든 대량 block에 의해 Chat hot cache가 밀려나는 victim 구조를 만듭니다(대화당 재사용 4회).
+turn-major라 `[모든 conv의 turn1] → [turn2] → … → [turn10]` 순으로 배치되어, 같은 대화의 재사용 간격(gap)이 약 100 요청이 됩니다. 이 gap이 think-time을 흉내내, RAG가 만든 대량 block에 의해 Chat hot cache가 밀려나는 victim 구조를 만듭니다(대화당 재사용 9회).
 
 ---
 
