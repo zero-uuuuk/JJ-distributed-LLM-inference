@@ -16,7 +16,7 @@ DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
-    "chat": 784,
+    "chat": 691,
     "rag": 205,
 }
 

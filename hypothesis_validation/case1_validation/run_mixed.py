@@ -28,7 +28,7 @@ DEFAULT_RAG_SLO_MS = 400.0
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
-    "chat": 784,
+    "chat": 691,
     "rag": 205,
 }
 
