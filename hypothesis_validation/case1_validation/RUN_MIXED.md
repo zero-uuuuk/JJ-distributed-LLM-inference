@@ -41,6 +41,16 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --port 8000
 ```
 
+> [!WARNING]
+> `VLLM_EVICTION_LOG`를 켠 경우, 실험이 끝난 뒤 vLLM 서버는 반드시 `Ctrl+C`로 종료하고 잠시 기다려야 합니다.
+> vLLM은 pending eviction 이벤트를 메모리에 들고 있다가 종료 시점에 `reused_later=false` 이벤트를 파일로 flush합니다.
+> 종료 후에는 eviction log에 `"reused_later": false`가 기록되었는지 반드시 확인합니다.
+> 바로 세션을 끊거나 강제 종료하면 eviction log가 완전히 집계되지 않을 수 있습니다.
+
+```bash
+grep '"reused_later": false' /home/ubuntu/vllm/eviction_logs/mixed_apc_on.jsonl | head
+```
+
 </details>
 
 <details>
