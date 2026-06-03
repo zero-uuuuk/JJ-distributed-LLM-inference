@@ -124,26 +124,29 @@ Chat APC ON 기준으로 single과 mixed를 비교하면 다음과 같다.
 |---|---|
 | Mixed APC ON | `eviction_logs/mixed_apc_on.jsonl` |
 
-이 log의 전체 eviction은 `80,858`건이다. 네 가지 eviction 방향을 한 번에 보면 다음과 같다.
+이 log의 전체 eviction은 `90,854`건이다. 네 가지 eviction 방향을 한 번에 보면 다음과 같다.
 
 | Case | Count | Share of total | Reused later | Reused ratio | 의미 |
 |---|---:|---:|---:|---:|---|
-| `chat <- chat` | 20,851 | 25.8% | 18,479 | 88.6% | Chat 요청이 Chat cached block을 밀어냄 |
-| `chat <- rag` | 17,663 | 21.8% | 15,124 | 85.6% | RAG 요청이 Chat cached block을 밀어냄 |
-| `rag <- chat` | 18,987 | 23.5% | 0 | 0.0% | Chat 요청이 RAG cached block을 밀어냄 |
-| `rag <- rag` | 23,357 | 28.9% | 0 | 0.0% | RAG 요청이 RAG cached block을 밀어냄 |
+| `chat <- chat` | 25,568 | 28.1% | 18,905 | 73.9% | Chat 요청이 Chat cached block을 밀어냄 |
+| `chat <- rag` | 18,584 | 20.5% | 14,690 | 79.0% | RAG 요청이 Chat cached block을 밀어냄 |
+| `rag <- chat` | 22,047 | 24.3% | 0 | 0.0% | Chat 요청이 RAG cached block을 밀어냄 |
+| `rag <- rag` | 24,655 | 27.1% | 6 | 0.0% | RAG 요청이 RAG cached block을 밀어냄 |
 
 ![Case 1 Eviction Breakdown](case1_analysis_image4_eviction_breakdown.png)
 
 *Figure 4. 전체 eviction 중 각 eviction 방향이 차지하는 비율과, 각 방향별 `reused_later` 비율을 비교한다.*
 
-Chat block eviction은 총 `38,514`건이고, 그중 `17,663`건이 `chat <- rag`이다. 즉 Chat eviction의 `45.9%`가 RAG 요청에 의해 발생했다. 더 중요한 점은 `chat <- rag` eviction 중 `85.6%`가 나중에 다시 재사용되었다는 것이다. 이 block들은 RAG가 밀어내지 않았다면 다음 Chat turn에서 hit 되었을 useful cache였다고 해석할 수 있다.
+Chat block eviction은 총 `44,152`건이고, 그중 `18,584`건이 `chat <- rag`이다. 즉 Chat eviction의 `42.1%`가 RAG 요청에 의해 발생했다. 더 중요한 점은 `chat <- rag` eviction 중 `79.0%`가 나중에 다시 재사용되었다는 것이다. 이 block들은 RAG가 밀어내지 않았다면 다음 Chat turn에서 hit 되었을 useful cache였다고 해석할 수 있다.
 
-반대로 `rag <- chat`은 `18,987`건 발생했지만, 이 run에서는 `reused_later=true`가 관측되지 않았다. 즉 cross-workload eviction이 양방향으로 발생하더라도, 모든 eviction이 같은 비용을 갖는 것은 아니다. 현재 결과에서는 **RAG가 Chat을 밀어낸 경우가 useful eviction으로 이어지는 비율이 높고**, Chat이 RAG를 밀어낸 경우는 이후 재사용 손실로 이어진 증거가 없다.
+반대로 `rag <- chat`은 `22,047`건 발생했지만, 이 run에서는 `reused_later=true`가 관측되지 않았다. `rag <- rag`에서도 later reuse는 `6`건으로 매우 작다. 즉 cross-workload eviction이 양방향으로 발생하더라도, 모든 eviction이 같은 비용을 갖는 것은 아니다. 현재 결과에서는 **RAG가 Chat을 밀어낸 경우가 useful eviction으로 이어지는 비율이 높고**, Chat이 RAG를 밀어낸 경우는 이후 재사용 손실로 이어진 증거가 없다.
 
 ![Reuse Time After Chat Cache Evicted by RAG](case1_analysis_image5_chat_rag_reuse_time.png)
 
-*Figure 5. `chat <- rag`의 `time_until_next_reuse`는 mean `14.63s`, p50 `14.58s`, p95 `26.21s`다. 이는 evict된 Chat block이 수십 초 안에 다시 필요해지는 경우가 많다는 뜻이며, `HYPOTHESIS.md`의 delayed reuse gap 설명과도 맞다.*
+*Figure 5. `chat <- rag`의 `time_until_next_reuse`는 mean `14.98s`, p50 `14.74s`, p95 `27.07s`다. 이는 evict된 Chat block이 수십 초 안에 다시 필요해지는 경우가 많다는 뜻이며, `HYPOTHESIS.md`의 delayed reuse gap 설명과도 맞다.*
+
+> [!NOTE]
+> `time_until_next_reuse`는 evict된 Chat cache가 다시 필요해진 시점까지의 시간이다. Chat workload에서는 이를 다음 turn이 도착하기까지의 think-time gap과 같은 시간축에서 해석할 수 있다. 즉 Figure 5는 RAG가 밀어낸 Chat cache가 곧 다음 turn에서 필요해질 useful cache였다는 해석을 보강한다.
 
 따라서 현재 Case 1 결과는 단순히 "Chat hit rate가 mixed에서 낮아졌다"는 상관관계에 그치지 않는다. vLLM eviction log 기준으로도 RAG 요청이 Chat cached block을 직접 evict했고, 그중 다수가 이후 다시 필요해진 useful Chat block이었다.
 
