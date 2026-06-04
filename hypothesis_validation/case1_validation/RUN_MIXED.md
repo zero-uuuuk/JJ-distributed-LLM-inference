@@ -31,6 +31,7 @@ mkdir -p hypothesis_validation/case1_validation/raw_results
 cd /home/ubuntu/vllm
 source /home/ubuntu/vllm/.venv/bin/activate
 
+VLLM_SERVER_DEV_MODE=1 \
 VLLM_EVICTION_LOG=/home/ubuntu/vllm/eviction_logs/mixed_chat5_rag5_apc_on_len8192.jsonl \
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -42,12 +43,12 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 ```
 
 > [!WARNING]
-> `VLLM_EVICTION_LOG`를 켠 경우, 실험이 끝난 뒤 vLLM 서버는 반드시 `Ctrl+C`로 종료하고 잠시 기다려야 합니다.
-> vLLM은 pending eviction 이벤트를 메모리에 들고 있다가 종료 시점에 `reused_later=false` 이벤트를 파일로 flush합니다.
-> 종료 후에는 eviction log에 `"reused_later": false`가 기록되었는지 반드시 확인합니다.
-> 바로 세션을 끊거나 강제 종료하면 eviction log가 완전히 집계되지 않을 수 있습니다.
+> `VLLM_EVICTION_LOG`를 켠 경우, 실험이 끝난 뒤 vLLM 서버가 살아있는 상태에서 `/flush_eviction_log`를 호출해야 합니다.
+> vLLM은 pending eviction 이벤트를 메모리에 들고 있으므로, 이 호출로 `reused_later=false` 이벤트를 파일로 명시적으로 flush합니다.
+> flush 후에는 eviction log에 `"reused_later": false`가 기록되었는지 반드시 확인합니다.
 
 ```bash
+curl -X POST http://127.0.0.1:8000/flush_eviction_log
 grep '"reused_later": false' /home/ubuntu/vllm/eviction_logs/mixed_chat5_rag5_apc_on_len8192.jsonl | head
 ```
 
@@ -99,6 +100,11 @@ python case1_validation/run_mixed.py \
 
 </details>
 
+```bash
+curl -X POST http://127.0.0.1:8000/flush_eviction_log
+grep '"reused_later": false' /home/ubuntu/vllm/eviction_logs/mixed_chat5_longctx5_apc_on_len8192.jsonl | head
+```
+
 <details>
 <summary>APC OFF 서버로 재시작한 뒤</summary>
 
@@ -124,6 +130,7 @@ python case1_validation/run_mixed.py \
 
 > [!NOTE]
 > Chat + Longctx mixed를 계측할 때는 vLLM 서버 재시작 시 `VLLM_EVICTION_LOG` 경로도 Longctx용 파일명으로 바꿔야 합니다.
+> 이때 `/flush_eviction_log` endpoint를 쓰려면 `VLLM_SERVER_DEV_MODE=1`도 함께 지정해야 합니다.
 > 예: `/home/ubuntu/vllm/eviction_logs/mixed_chat5_longctx5_apc_on_len8192.jsonl`
 
 <details>
