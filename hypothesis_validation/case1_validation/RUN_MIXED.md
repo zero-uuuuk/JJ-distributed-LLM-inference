@@ -142,7 +142,7 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-longctx-prompts 1000 \
   --chat-slo-ms 400 \
-  --longctx-slo-ms 400 \
+  --longctx-slo-ms 7700 \
   --output case1_validation/raw_results/mixed_chat5_longctx5_apc_on_len8192.jsonl
 ```
 
@@ -163,7 +163,7 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-longctx-prompts 1000 \
   --chat-slo-ms 400 \
-  --longctx-slo-ms 400 \
+  --longctx-slo-ms 7700 \
   --output case1_validation/raw_results/mixed_chat5_longctx5_apc_off_len8192.jsonl
 ```
 

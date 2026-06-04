@@ -166,7 +166,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 400 \
+  --slo-ms 7700 \
   --output case1_validation/raw_results/longctx_only_apc_on.jsonl
 ```
 
@@ -185,7 +185,7 @@ python case1_validation/run_trace.py \
   --qps 5.0 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 400 \
+  --slo-ms 7700 \
   --output case1_validation/raw_results/longctx_only_apc_off.jsonl
 ```
 
