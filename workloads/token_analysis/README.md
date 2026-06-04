@@ -2,7 +2,7 @@
 
 # Token Analysis
 
-ShareGPT Chat, MS MARCO RAG, LongAlpaca Longctx workload의 `prompt_tokens` 분포를 확인하기 위한 파일들입니다.
+ShareGPT Chat, MS MARCO RAG, HotpotQA Longctx workload의 `prompt_tokens` 분포를 확인하기 위한 파일들입니다.
 
 | File | Description |
 |---|---|

@@ -31,7 +31,7 @@ DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
     "chat": 691,
     "rag": 205,
-    "longctx": 499,
+    "longctx": 41,
 }
 
 # 이 파일은 hypothesis_validation/case1_validation/ 아래 있으므로, 상위 2단계가 repo root다.
@@ -40,7 +40,7 @@ HYPOTHESIS_DIR = CASE1_VALIDATION_DIR.parent
 REPO_ROOT = HYPOTHESIS_DIR.parent
 DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl"
 DEFAULT_RAG_TRACE = REPO_ROOT / "workloads/msmarco/msmarco_v21_validation.jsonl"
-DEFAULT_LONGCTX_TRACE = REPO_ROOT / "workloads/longalpaca/longalpaca_longctx.jsonl"
+DEFAULT_LONGCTX_TRACE = REPO_ROOT / "workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl"
 DEFAULT_OUTPUT_DIR = CASE1_VALIDATION_DIR / "raw_results"
 
 
@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
             "  python case1_validation/run_mixed.py --chat-qps 5 --rag-qps 5 "
             "--output case1_validation/raw_results/mixed_chat5_rag5_apc_on_len8192.jsonl\n"
             "  python case1_validation/run_mixed.py --longctx-trace "
-            "../workloads/longalpaca/longalpaca_longctx.jsonl"
+            "../workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl"
         ),
     )
     parser.add_argument(
@@ -118,7 +118,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Longctx JSONL 경로. 지정하면 RAG 대신 Longctx mixed를 실행합니다. "
-            "값 없이 지정하면 기본 LongAlpaca trace를 사용합니다."
+            "값 없이 지정하면 기본 HotpotQA longctx trace를 사용합니다."
         ),
     )
     parser.add_argument("--chat-qps", type=float, default=5.0, help="Chat 도착 QPS")
@@ -188,8 +188,8 @@ def resolve_antagonist_config(args: argparse.Namespace) -> dict[str, Any]:
             "num_prompts": args.num_longctx_prompts,
             "slo_ms": args.longctx_slo_ms,
             "build_hint": (
-                "  cd workloads/longalpaca && python build_longalpaca_workload.py "
-                "--output longalpaca_longctx.jsonl"
+                "  cd workloads/hotpotqa && python build_hotpotqa_workload.py "
+                "--output hotpotqa_longctx_2000_4000.jsonl"
             ),
         }
 

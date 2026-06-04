@@ -158,7 +158,7 @@ cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
 source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
 
 python case1_validation/run_trace.py \
-  --trace ../workloads/longalpaca/longalpaca_longctx.jsonl \
+  --trace ../workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
@@ -177,7 +177,7 @@ python case1_validation/run_trace.py \
 
 ```bash
 python case1_validation/run_trace.py \
-  --trace ../workloads/longalpaca/longalpaca_longctx.jsonl \
+  --trace ../workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl \
   --api chat \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \

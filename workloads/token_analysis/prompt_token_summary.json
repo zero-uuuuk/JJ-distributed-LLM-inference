@@ -3,6 +3,7 @@
   "inputs": {
     "chat_only": "hypothesis_validation/case1_validation/raw_results/chat_only_apc_on.jsonl",
     "rag_only": "hypothesis_validation/case1_validation/raw_results/rag_only_apc_on.jsonl",
+    "longctx_only": "workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl",
     "mixed": "hypothesis_validation/case1_validation/raw_results/mixed_chat5_rag5_apc_on_len8192.jsonl"
   },
   "stats": {
@@ -25,6 +26,16 @@
       "p95": 1053.05,
       "p99": 1465.0,
       "max": 1605
+    },
+    "Longctx-only (HotpotQA)": {
+      "n": 1000,
+      "sum": 2245224,
+      "mean": 2245.224,
+      "p50": 2157.5,
+      "p90": 2584.5000000000005,
+      "p95": 2835.2,
+      "p99": 3236.0299999999997,
+      "max": 3570
     },
     "Mixed Chat": {
       "n": 1000,
@@ -152,6 +163,10 @@
   "ratios": {
     "rag_only_mean_over_chat_only_mean": 1.158701958660273,
     "rag_only_sum_over_chat_only_sum": 1.158701958660273,
+    "longctx_only_mean_over_chat_only_mean": 3.183459571970202,
+    "longctx_only_sum_over_chat_only_sum": 3.183459571970202,
+    "longctx_only_mean_over_rag_only_mean": 2.7474360841255643,
+    "longctx_only_sum_over_rag_only_sum": 2.7474360841255643,
     "mixed_rag_mean_over_mixed_chat_mean": 1.158701958660273,
     "mixed_rag_sum_over_mixed_chat_sum": 1.158701958660273
   }
