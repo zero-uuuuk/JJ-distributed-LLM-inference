@@ -194,7 +194,6 @@ prefix cache는 1차적으로 prefill/TTFT에 영향을 준다. 다만 TPOT도 �
 - **Chat**: multi-turn conversation으로, turn 사이 think-time gap을 포함한다(이 gap이 2절의 LRU aging out을 일으키는 핵심 변수다). ShareGPT류의 실제 대화 trace를 기반으로 한다.
 - **RAG**: 공유 corpus에서 문서를 끌어오는 현실적 RAG baseline이다. MS MARCO trace의 token 분석상 Chat보다 약간 긴 수준이므로, prefill-heavy workload로 유지하되 long-context 압력을 대표한다고 보지는 않는다.
 - **Longctx**: HotpotQA distractor 기반 multi-hop QA로, 요청마다 3k 내외의 low-reuse multi-doc prompt를 넣는다. RAG보다 강한 antagonist로 사용해 Chat hot cache eviction 메커니즘을 자극한다.
-- Antagonist pressure(mix 비율, context length/prompt length, 도착률)를 sweep하여 eviction과 hit rate 변화의 인과를 본다.
 
 ---
 
