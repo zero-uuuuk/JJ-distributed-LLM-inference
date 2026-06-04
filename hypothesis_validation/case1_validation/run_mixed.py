@@ -1,4 +1,4 @@
-"""역할: Chat(ShareGPT)과 RAG(MS MARCO) 두 워크로드를 동시에 vLLM 서버로 전송해
+"""역할: Chat(ShareGPT)과 antagonist(RAG/Longctx) 두 워크로드를 동시에 vLLM 서버로 전송해
        prefix KV cache pollution 현상을 측정한다.
 
 상세 과정:
@@ -25,11 +25,13 @@ DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_CHAT_SLO_MS = 400.0
 DEFAULT_RAG_SLO_MS = 400.0
+DEFAULT_LONGCTX_SLO_MS = 400.0
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
     "chat": 691,
     "rag": 205,
+    "longctx": 499,
 }
 
 # 이 파일은 hypothesis_validation/case1_validation/ 아래 있으므로, 상위 2단계가 repo root다.
@@ -38,7 +40,8 @@ HYPOTHESIS_DIR = CASE1_VALIDATION_DIR.parent
 REPO_ROOT = HYPOTHESIS_DIR.parent
 DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl"
 DEFAULT_RAG_TRACE = REPO_ROOT / "workloads/msmarco/msmarco_v21_validation.jsonl"
-DEFAULT_OUTPUT = CASE1_VALIDATION_DIR / "raw_results/mixed_5_5_apc_on_len8192.jsonl"
+DEFAULT_LONGCTX_TRACE = REPO_ROOT / "workloads/longalpaca/longalpaca_longctx.jsonl"
+DEFAULT_OUTPUT_DIR = CASE1_VALIDATION_DIR / "raw_results"
 
 
 # ---------------------------------------------------------------------------
@@ -84,13 +87,15 @@ def resolve_summary_path(output_path: Path) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Chat + RAG 두 workload를 동시에 전송해 cache pollution을 측정합니다.",
+        description="Chat + RAG/Longctx 두 workload를 동시에 전송해 cache pollution을 측정합니다.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "예시 (hypothesis_validation/ 에서):\n"
             "  python case1_validation/run_mixed.py\n"
             "  python case1_validation/run_mixed.py --chat-qps 5 --rag-qps 5 "
-            "--output case1_validation/raw_results/mixed_5_5_apc_on_len8192.jsonl"
+            "--output case1_validation/raw_results/mixed_chat5_rag5_apc_on_len8192.jsonl\n"
+            "  python case1_validation/run_mixed.py --longctx-trace "
+            "../workloads/longalpaca/longalpaca_longctx.jsonl"
         ),
     )
     parser.add_argument(
@@ -105,22 +110,41 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RAG_TRACE,
         help="RAG JSONL 경로 (기본: MS MARCO validation trace)",
     )
+    parser.add_argument(
+        "--longctx-trace",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_LONGCTX_TRACE,
+        default=None,
+        help=(
+            "Longctx JSONL 경로. 지정하면 RAG 대신 Longctx mixed를 실행합니다. "
+            "값 없이 지정하면 기본 LongAlpaca trace를 사용합니다."
+        ),
+    )
     parser.add_argument("--chat-qps", type=float, default=5.0, help="Chat 도착 QPS")
     parser.add_argument("--rag-qps", type=float, default=5.0, help="RAG 도착 QPS")
+    parser.add_argument("--longctx-qps", type=float, default=5.0, help="Longctx 도착 QPS")
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help="결과 JSONL 저장 경로",
+        default=None,
+        help="결과 JSONL 저장 경로. 생략하면 workload와 QPS를 반영해 자동 생성합니다.",
     )
     parser.add_argument("--url", default=DEFAULT_URL, help="vLLM chat completions URL")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--max-concurrency", type=int, default=32)
     parser.add_argument("--num-chat-prompts", type=int, default=1000)
     parser.add_argument("--num-rag-prompts", type=int, default=1000)
+    parser.add_argument("--num-longctx-prompts", type=int, default=1000)
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--chat-slo-ms", type=float, default=DEFAULT_CHAT_SLO_MS, help="Chat TTFT SLO (ms)")
     parser.add_argument("--rag-slo-ms", type=float, default=DEFAULT_RAG_SLO_MS, help="RAG TTFT SLO (ms)")
+    parser.add_argument(
+        "--longctx-slo-ms",
+        type=float,
+        default=DEFAULT_LONGCTX_SLO_MS,
+        help="Longctx TTFT SLO (ms)",
+    )
     return parser.parse_args()
 
 
@@ -133,6 +157,54 @@ def resolve_trace_path(path: Path, label: str, build_hint: str) -> Path:
         f"{label} trace를 찾을 수 없습니다: {resolved}\n"
         f"먼저 워크로드를 생성하세요:\n{build_hint}"
     )
+
+
+def format_qps_label(qps: float) -> str:
+    """파일명에 넣을 QPS 값을 짧고 안전한 문자열로 변환한다."""
+    if float(qps).is_integer():
+        return str(int(qps))
+    return str(qps).replace("-", "m").replace(".", "p")
+
+
+def resolve_output_path(args: argparse.Namespace, antagonist_tag: str, antagonist_qps: float) -> Path:
+    """명시된 output이 없으면 workload 종류가 드러나는 기본 파일명을 만든다."""
+    if args.output is not None:
+        return args.output.expanduser().resolve()
+
+    chat_label = format_qps_label(args.chat_qps)
+    antagonist_label = format_qps_label(antagonist_qps)
+    filename = f"mixed_chat{chat_label}_{antagonist_tag}{antagonist_label}_apc_on_len8192.jsonl"
+    return (DEFAULT_OUTPUT_DIR / filename).resolve()
+
+
+def resolve_antagonist_config(args: argparse.Namespace) -> dict[str, Any]:
+    """Longctx trace가 지정되면 RAG 대신 Longctx를 두 번째 workload로 선택한다."""
+    if args.longctx_trace is not None:
+        return {
+            "tag": "longctx",
+            "label": "Longctx",
+            "trace": args.longctx_trace,
+            "qps": args.longctx_qps,
+            "num_prompts": args.num_longctx_prompts,
+            "slo_ms": args.longctx_slo_ms,
+            "build_hint": (
+                "  cd workloads/longalpaca && python build_longalpaca_workload.py "
+                "--output longalpaca_longctx.jsonl"
+            ),
+        }
+
+    return {
+        "tag": "rag",
+        "label": "RAG",
+        "trace": args.rag_trace,
+        "qps": args.rag_qps,
+        "num_prompts": args.num_rag_prompts,
+        "slo_ms": args.rag_slo_ms,
+        "build_hint": (
+            "  cd workloads/msmarco && python build_msmarco_rag_workload.py "
+            "--output msmarco_v21_validation.jsonl"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -441,21 +513,23 @@ def build_summary(
     results: list[dict[str, Any]],
     duration_seconds: float,
     chat_slo_ms: float,
-    rag_slo_ms: float,
+    antagonist_tag: str,
+    antagonist_slo_ms: float,
 ) -> dict[str, Any]:
     """콘솔 출력과 파일 저장에 함께 쓰는 mixed 집계 지표를 생성한다."""
     total_ok = sum(1 for r in results if r["error"] is None and r["ttft"] is not None)
     total_failed = len(results) - total_ok
     chat_summary = summarize_workload(results, "chat", chat_slo_ms, duration_seconds)
-    rag_summary = summarize_workload(results, "rag", rag_slo_ms, duration_seconds)
+    antagonist_summary = summarize_workload(results, antagonist_tag, antagonist_slo_ms, duration_seconds)
 
     return {
         "duration_seconds": duration_seconds,
         "n_total": len(results),
         "n_ok": total_ok,
         "n_failed": total_failed,
+        "antagonist_workload": antagonist_tag,
         "chat": chat_summary,
-        "rag": rag_summary,
+        antagonist_tag: antagonist_summary,
     }
 
 
@@ -468,7 +542,7 @@ def print_summary(
         f"실패: {summary['n_failed']}  소요: {summary['duration_seconds']:.1f}s"
     )
 
-    for workload_summary in (summary["chat"], summary["rag"]):
+    for workload_summary in (summary["chat"], summary[summary["antagonist_workload"]]):
         tag = workload_summary["workload"]
         if workload_summary["n_ok"] == 0:
             print(f"\n  [{tag.upper()}] 성공한 요청 없음 (실패: {workload_summary['n_failed']})")
@@ -512,36 +586,41 @@ def print_summary(
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    antagonist_config = resolve_antagonist_config(args)
+    antagonist_tag = antagonist_config["tag"]
+    antagonist_qps = antagonist_config["qps"]
+    antagonist_num_prompts = antagonist_config["num_prompts"]
+    antagonist_slo_ms = antagonist_config["slo_ms"]
+
     chat_trace = resolve_trace_path(
         args.chat_trace,
         "Chat",
         "  cd workloads/sharegpt && python build_sharegpt_workload.py "
         "--output sharegpt_victim_100conv_10turn.jsonl",
     )
-    rag_trace = resolve_trace_path(
-        args.rag_trace,
-        "RAG",
-        "  cd workloads/msmarco && python build_msmarco_rag_workload.py "
-        "--output msmarco_v21_validation.jsonl",
+    antagonist_trace = resolve_trace_path(
+        antagonist_config["trace"],
+        antagonist_config["label"],
+        antagonist_config["build_hint"],
     )
-    output_path = args.output.expanduser().resolve()
+    output_path = resolve_output_path(args, antagonist_tag, antagonist_qps)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     chat_requests = load_jsonl(chat_trace)
-    rag_requests = load_jsonl(rag_trace)
+    antagonist_requests = load_jsonl(antagonist_trace)
     if args.num_chat_prompts > 0:
         chat_requests = chat_requests[: args.num_chat_prompts]
-    if args.num_rag_prompts > 0:
-        rag_requests = rag_requests[: args.num_rag_prompts]
+    if antagonist_num_prompts > 0:
+        antagonist_requests = antagonist_requests[:antagonist_num_prompts]
 
-    total = len(chat_requests) + len(rag_requests)
+    total = len(chat_requests) + len(antagonist_requests)
     print(
         f"chat={len(chat_requests)} @ {args.chat_qps} qps | "
-        f"rag={len(rag_requests)} @ {args.rag_qps} qps | "
+        f"{antagonist_tag}={len(antagonist_requests)} @ {antagonist_qps} qps | "
         f"total={total} | concurrency={args.max_concurrency} | url={args.url}"
     )
     print(f"chat_trace={chat_trace}")
-    print(f"rag_trace={rag_trace}")
+    print(f"{antagonist_tag}_trace={antagonist_trace}")
     print(f"output={output_path}")
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -570,7 +649,7 @@ async def main_async(args: argparse.Namespace) -> None:
             # 두 workload의 Poisson 도착을 독립적으로 동시에 진행한다.
             await asyncio.gather(
                 workload_producer(chat_requests, args.chat_qps, "chat", queue, seed=42),
-                workload_producer(rag_requests, args.rag_qps, "rag", queue, seed=43),
+                workload_producer(antagonist_requests, antagonist_qps, antagonist_tag, queue, seed=43),
             )
             # 두 producer가 모두 끝난 뒤 sentinel을 하나만 보낸다.
             await queue.put(None)
@@ -578,7 +657,13 @@ async def main_async(args: argparse.Namespace) -> None:
 
         duration_seconds = time.perf_counter() - start_perf
 
-    summary = build_summary(results, duration_seconds, args.chat_slo_ms, args.rag_slo_ms)
+    summary = build_summary(
+        results,
+        duration_seconds,
+        args.chat_slo_ms,
+        antagonist_tag,
+        antagonist_slo_ms,
+    )
     summary_path = resolve_summary_path(output_path)
 
     write_jsonl(output_path, results)

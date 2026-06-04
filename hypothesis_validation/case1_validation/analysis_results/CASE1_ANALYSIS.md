@@ -25,9 +25,9 @@
 | Chat-only APC OFF | `chat_only_apc_off_summary.json` |
 | RAG-only APC ON | `rag_only_apc_on_summary.json` |
 | RAG-only APC OFF | `rag_only_apc_off_summary.json` |
-| Mixed APC ON | `mixed_5_5_apc_on_len8192_summary.json` |
-| Mixed APC OFF | `mixed_5_5_apc_off_len8192_summary.json` |
-| Mixed APC ON eviction log | `eviction_logs/mixed_apc_on.jsonl` |
+| Mixed APC ON | `mixed_chat5_rag5_apc_on_len8192_summary.json` |
+| Mixed APC OFF | `mixed_chat5_rag5_apc_off_len8192_summary.json` |
+| Mixed APC ON eviction log | `eviction_logs/mixed_chat5_rag5_apc_on_len8192.jsonl` |
 
 현재 실험 조건은 다음과 같다.
 
@@ -122,7 +122,7 @@ Chat APC ON 기준으로 single과 mixed를 비교하면 다음과 같다.
 
 | 조건 | 파일 |
 |---|---|
-| Mixed APC ON | `eviction_logs/mixed_apc_on.jsonl` |
+| Mixed APC ON | `eviction_logs/mixed_chat5_rag5_apc_on_len8192.jsonl` |
 
 이 log의 전체 eviction은 `90,854`건이다. 네 가지 eviction 방향을 한 번에 보면 다음과 같다.
 

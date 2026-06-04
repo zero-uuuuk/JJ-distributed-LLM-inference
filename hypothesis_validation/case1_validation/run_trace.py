@@ -1,3 +1,11 @@
+"""역할: 단일 JSONL trace를 vLLM 서버로 전송해 workload별 baseline 지표를 측정한다.
+
+상세 과정:
+  1. 입력 trace를 읽고 지정한 개수만큼 요청을 선택한다.
+  2. Poisson 도착 과정으로 요청을 vLLM OpenAI 호환 API에 전송한다.
+  3. 요청별 TTFT·TPOT·prefix cache hit rate를 기록한다.
+  4. workload 태그별 output token cap과 SLO 기준으로 요약 지표를 저장한다.
+"""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +26,7 @@ DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
     "chat": 691,
     "rag": 205,
+    "longctx": 499,
 }
 
 
@@ -78,13 +87,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workload-tag",
         default="default",
-        help="결과 row에 붙을 workload 레이블 (예: chat, rag)",
+        help="결과 row에 붙을 workload 레이블 (예: chat, rag, longctx)",
     )
     parser.add_argument(
         "--slo-ms",
         type=float,
         default=None,
-        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=400, rag=400)",
+        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=400, rag=400, longctx=400)",
     )
     return parser.parse_args()
 

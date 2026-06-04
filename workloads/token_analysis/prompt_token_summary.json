@@ -3,7 +3,7 @@
   "inputs": {
     "chat_only": "hypothesis_validation/case1_validation/raw_results/chat_only_apc_on.jsonl",
     "rag_only": "hypothesis_validation/case1_validation/raw_results/rag_only_apc_on.jsonl",
-    "mixed": "hypothesis_validation/case1_validation/raw_results/mixed_5_5_apc_on_len8192.jsonl"
+    "mixed": "hypothesis_validation/case1_validation/raw_results/mixed_chat5_rag5_apc_on_len8192.jsonl"
   },
   "stats": {
     "Chat-only": {

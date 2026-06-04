@@ -20,16 +20,16 @@
 
 Mixed workload에서는 scheduling, batching 문제뿐 아니라 prefix cache의 이점도 잘 못 살리는 문제가 생긴다.
 
-흔히 이를 "RAG가 cache를 많이 차지해서(occupancy) Chat이 밀려난다"고 설명하지만, 이 프레이밍은 정확하지 않다. vLLM의 APC(automatic prefix caching)는 점유율 비례로 block을 쫓아내지 않는다. **참조가 끝난(ref=0) free block에 대한 LRU eviction**이다. 그리고 LRU는 원래 자주 재사용되는 hot block을 보호하도록 설계되어 있다.
+흔히 이를 "다른 workload가 cache를 많이 차지해서(occupancy) Chat이 밀려난다"고 설명하지만, 이 프레이밍은 정확하지 않다. vLLM의 APC(automatic prefix caching)는 점유율 비례로 block을 쫓아내지 않는다. **참조가 끝난(ref=0) free block에 대한 LRU eviction**이다. 그리고 LRU는 원래 자주 재사용되는 hot block을 보호하도록 설계되어 있다.
 
 그렇다면 왜 hot cache가 밀려나는가? 진짜 원인은 점유율이 아니라 **reuse 시간 척도의 불일치(temporal mismatch)에서 오는 LRU의 구조적 결함**이다.
 
 - Chat의 재사용은 **multi-turn 사이 think-time gap**이 크다 (수 초~수십 초). 같은 prefix를 다시 쓰지만, 다시 쓰기까지의 간격이 길다.
-- 그 gap 동안 RAG는 대량의 신규 block을 계속 생산한다. Chat block은 touch되지 않은 채 LRU tail로 밀려난다.
-- 게다가 RAG의 갓 끝난 long-context block은 "방금 쓰인" 것이라 LRU상 MRU 쪽에 위치한다. **LRU는 "최근 생산된 일회용 대용량 block"과 "최근 가치 있는(곧 재사용될) block"을 구분하지 못한다.**
+- 그 gap 동안 RAG/Longctx 같은 다른 workload는 신규 block을 계속 생산한다. Chat block은 touch되지 않은 채 LRU tail로 밀려난다.
+- 특히 Longctx처럼 low-reuse 대용량 prompt를 가진 workload는 수천 token 규모의 신규 block을 만들고, 갓 끝난 block은 "방금 쓰인" 것이라 LRU상 MRU 쪽에 위치한다. **LRU는 "최근 생산된 일회용 대용량 block"과 "최근 가치 있는(곧 재사용될) block"을 구분하지 못한다.**
 - 결국 Chat이 다음 turn에 돌아왔을 때, 재사용 가능했던 prefix block은 이미 evict되어 있다.
 
-즉 문제는 *"RAG가 공간을 많이 먹어서"*가 아니라, **reuse 간격이 긴 workload(Chat)가 volume이 큰 workload(RAG)에게 LRU 상에서 aging out 당하기 때문**이다. recency(마지막 접근 시각)만 보는 LRU는 reuse 가치를 알지 못한다.
+즉 문제는 *"특정 workload가 공간을 많이 먹어서"*가 아니라, **reuse 간격이 긴 workload(Chat)가 volume이 큰 workload에게 LRU 상에서 aging out 당하기 때문**이다. recency(마지막 접근 시각)만 보는 LRU는 reuse 가치를 알지 못한다.
 
 이 경우 Chat은 원래 cache hit으로 이득을 볼 수 있었지만, eviction 때문에 다시 prefill을 수행해야 한다. 그 결과 mixed workload에서 다음 문제가 나타난다.
 
@@ -50,7 +50,7 @@ Mixed workload에서 prefix cache의 이점을 잘 살리지 못하는 주요 �
 
 1. mixed workload에서 prefix cache ON의 이득(APC gain)이 단일 workload만큼 유지되지 않는가?
 2. 그 이득 감소가 scheduling/batching 손해와 분리해서, **cache eviction 자체**로 설명되는가?
-3. 특히 reusable prefix를 가진 workload(Chat)의 hot cache가, recency만 보는 LRU 때문에 다른 workload(RAG)에 의해 밀려나는가?
+3. 특히 reusable prefix를 가진 workload(Chat)의 hot cache가, recency만 보는 LRU 때문에 다른 workload(RAG/Longctx)에 의해 밀려나는가?
 4. QuotaServe가 이 cross-workload eviction을 줄여 prefix cache의 이점을 회복시키는가?
 
 ---
@@ -82,7 +82,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 1. **Quota의 대상이 무엇인가?**
    - (a) *evictable한 cached prefix block만* 대상으로 quota를 거는가, 아니면
    - (b) *전체 KV block pool(running 요청의 KV 포함)* 에 quota를 거는가?
-   - vLLM은 동일한 block pool이 running 요청의 KV와 cached prefix를 공유한다. (b)로 RAG 총 할당을 제한하면 in-flight RAG 요청을 throttle하여 RAG TTFT/throughput을 크게 해칠 수 있다. 반면 (a)는 RAG의 running KV는 건드리지 않고 "이미 쓸모를 다한 cached block"만 제한하므로, RAG reuse가 낮다면 RAG 손해가 거의 없는 **Pareto win**이 될 수 있다. 본 연구는 (a) 방향을 우선 검토한다.
+   - vLLM은 동일한 block pool이 running 요청의 KV와 cached prefix를 공유한다. (b)로 RAG/Longctx 총 할당을 제한하면 in-flight 요청을 throttle하여 해당 workload의 TTFT/throughput을 크게 해칠 수 있다. 반면 (a)는 running KV는 건드리지 않고 "이미 쓸모를 다한 cached block"만 제한하므로, reuse가 낮은 workload라면 손해가 거의 없는 **Pareto win**이 될 수 있다. 본 연구는 (a) 방향을 우선 검토한다.
 
 2. **목적함수가 무엇인가?**
    - aggregate goodput / per-workload SLO attainment / Pareto improvement / fairness 중 무엇을 최적화하는가? "개선"의 정의가 없으면 Case 2 결과를 해석할 수 없다. 적어도 "per-workload SLO를 깨지 않으면서 aggregate를 높인다" 수준의 기준은 먼저 고정한다.
@@ -107,7 +107,9 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 |---|---|---|
 | Chat-only | ON / OFF | Chat baseline 및 single APC gain |
 | RAG-only | ON / OFF | RAG baseline 및 single APC gain |
-| Chat + RAG mixed | ON / OFF | mixed에서의 APC gain |
+| Longctx-only | ON / OFF | Longctx baseline 및 single APC gain |
+| Chat + RAG mixed | ON / OFF | 현실적 RAG mixed에서의 APC gain |
+| Chat + Longctx mixed | ON / OFF | 강한 대용량 antagonist mixed에서의 APC gain |
 
 분리 측정:
 
@@ -121,8 +123,8 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 - mixed에서 Chat hit rate가 떨어지는가?
 - mixed에서 Chat TTFT가 증가하는가?
 - mixed에서 Chat SLO attainment가 감소하는가?
-- mixed에서 RAG TTFT와 SLO attainment는 어떻게 변하는가?
-- mixed에서 RAG pressure(비율·context length)가 커질수록 eviction이 발생해 Chat hit rate가 감소하는가?
+- mixed에서 antagonist(RAG/Longctx)의 TTFT와 SLO attainment는 어떻게 변하는가?
+- mixed에서 antagonist pressure(비율·context length·prompt length)가 커질수록 eviction이 발생해 Chat hit rate가 감소하는가?
 
 ### Case 2. Cache policy 비교
 
@@ -141,7 +143,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 - QuotaServe가 LRU 대비 cache hit rate를 회복시키는가?
 - **reuse-aware eviction만으로 이미 회복되는가?** (그렇다면 quota의 추가 기여가 작다는 신호)
 - QuotaServe가 TTFT와 SLO attainment를 개선하는가?
-- QuotaServe가 Chat을 보호하는 대신 RAG TTFT/SLO를 얼마나 희생시키는가? (4.1의 quota 대상 결정에 따라 달라짐)
+- QuotaServe가 Chat을 보호하는 대신 antagonist workload의 TTFT/SLO를 얼마나 희생시키는가? (4.1의 quota 대상 결정에 따라 달라짐)
 
 ---
 
@@ -151,7 +153,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 
 | Case | 비교 기준 |
 |---|---|
-| Case 1 | `Chat-only`, `RAG-only` 대비 `Chat + RAG mixed` (각각 APC ON/OFF) |
+| Case 1 | `Chat-only`, `RAG-only`, `Longctx-only` 대비 `Chat + RAG mixed`, `Chat + Longctx mixed` (각각 APC ON/OFF) |
 | Case 2 | 같은 mixed 조건에서 `LRU` vs `reuse-aware eviction` vs `QuotaServe` (APC ON) |
 
 핵심 지표는 세 묶음이다.
@@ -164,7 +166,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 
 ### 6.1 Eviction attribution 계측 (구현됨)
 
-vLLM 내부에 eviction attribution 계측을 추가했다. 어떤 workload가 어떤 workload의 cache block을 evict했는지 직접 기록한다. 따라서 RAG 비율이나 context length를 높였을 때 Chat hit rate가 감소하는지만 보는 것이 아니라, **실제로 RAG 요청이 Chat cache block을 evict했는지**(상관이 아닌 인과)도 함께 측정한다.
+vLLM 내부에 eviction attribution 계측을 추가했다. 어떤 workload가 어떤 workload의 cache block을 evict했는지 직접 기록한다. 따라서 RAG/Longctx 비율이나 prompt length를 높였을 때 Chat hit rate가 감소하는지만 보는 것이 아니라, **실제로 antagonist 요청이 Chat cache block을 evict했는지**(상관이 아닌 인과)도 함께 측정한다.
 
 `useful eviction` 측정은 **shadow cache** 방식으로 구현했다. evict된 block의 hash를 따로 보관해 두고, 이후 요청이 그 block을 다시 요구했는지(즉 evict하지 않았다면 hit이었을지)를 매칭한다. 이로써 "쫓아내도 됐던 block"과 "쫓아내서 손해 본 hot block"을 구분한다.
 
@@ -190,8 +192,9 @@ prefix cache는 1차적으로 prefill/TTFT에 영향을 준다. 다만 TPOT도 �
 결과가 합성 설정의 artifact가 되지 않도록, reuse 구조가 현실적인 trace를 사용한다.
 
 - **Chat**: multi-turn conversation으로, turn 사이 think-time gap을 포함한다(이 gap이 2절의 LRU aging out을 일으키는 핵심 변수다). ShareGPT류의 실제 대화 trace를 기반으로 한다.
-- **RAG**: 공유 corpus에서 문서를 끌어오되, 요청마다 긴 context를 넣는다. 문서 prefix가 공유되는 정도(shared vs unique)를 조절해 RAG 자체의 reuse 수준을 통제한다.
-- RAG pressure(mix 비율, context length, 도착률)를 sweep하여 eviction과 hit rate 변화의 인과를 본다.
+- **RAG**: 공유 corpus에서 문서를 끌어오는 현실적 RAG baseline이다. MS MARCO trace의 token 분석상 Chat보다 약간 긴 수준이므로, prefill-heavy workload로 유지하되 long-context 압력을 대표한다고 보지는 않는다.
+- **Longctx**: LongAlpaca 기반 long-context QA로, 요청마다 수천 token 규모의 low-reuse prompt를 넣는다. RAG보다 강한 대용량 antagonist로 사용해 Chat hot cache eviction 메커니즘을 더 선명하게 자극한다.
+- Antagonist pressure(mix 비율, context length/prompt length, 도착률)를 sweep하여 eviction과 hit rate 변화의 인과를 본다.
 
 ---
 

@@ -4,7 +4,7 @@
 
 **run_trace.py 실행 방법**
 
-_Single workload · APC ON/OFF · Chat-only · RAG-only_
+_Single workload · APC ON/OFF · Chat-only · RAG-only · Longctx-only_
 
 </div>
 
@@ -148,7 +148,50 @@ python case1_validation/run_trace.py \
 
 </details>
 
-### 5. 측정값
+### 5. Longctx-only 실행
+
+<details>
+<summary>APC ON 서버가 떠 있을 때</summary>
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python case1_validation/run_trace.py \
+  --trace ../workloads/longalpaca/longalpaca_longctx.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --workload-tag longctx \
+  --qps 5.0 \
+  --max-concurrency 32 \
+  --num-prompts 1000 \
+  --slo-ms 400 \
+  --output case1_validation/raw_results/longctx_only_apc_on.jsonl
+```
+
+</details>
+
+<details>
+<summary>APC OFF 서버로 재시작한 뒤</summary>
+
+```bash
+python case1_validation/run_trace.py \
+  --trace ../workloads/longalpaca/longalpaca_longctx.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --workload-tag longctx \
+  --qps 5.0 \
+  --max-concurrency 32 \
+  --num-prompts 1000 \
+  --slo-ms 400 \
+  --output case1_validation/raw_results/longctx_only_apc_off.jsonl
+```
+
+</details>
+
+### 6. 측정값
 
 결과 해석은 요청별 raw 결과보다 `*_summary.json` 기준으로 보는 것을 권장합니다.
 
