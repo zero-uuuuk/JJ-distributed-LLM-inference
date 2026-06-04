@@ -122,7 +122,9 @@ python case1_validation/run_mixed.py \
 
 ### 4. Chat + Longctx Mixed 실행
 
-`--longctx-trace`를 지정하면 `run_mixed.py`는 RAG 대신 Longctx를 두 번째 workload로 사용합니다. 이때 요청의 `user` 필드는 `chat` 또는 `longctx`로 들어갑니다.
+> [!NOTE]
+> Chat + Longctx mixed를 계측할 때는 vLLM 서버 재시작 시 `VLLM_EVICTION_LOG` 경로도 Longctx용 파일명으로 바꿔야 합니다.
+> 예: `/home/ubuntu/vllm/eviction_logs/mixed_chat5_longctx5_apc_on_len8192.jsonl`
 
 <details>
 <summary>APC ON 서버가 떠 있을 때</summary>
