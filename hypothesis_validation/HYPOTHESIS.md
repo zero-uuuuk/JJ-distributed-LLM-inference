@@ -124,7 +124,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 - mixed에서 Chat TTFT가 증가하는가?
 - mixed에서 Chat SLO attainment가 감소하는가?
 - mixed에서 antagonist(RAG/Longctx)의 TTFT와 SLO attainment는 어떻게 변하는가?
-- mixed에서 antagonist pressure(비율·context length·prompt length)가 커질수록 eviction이 발생해 Chat hit rate가 감소하는가?
+- mixed에서 RAG보다 cache pressure가 큰 Longctx가 Chat hot cache를 더 많이 직접 evict하는가? 특히 `chat <- longctx` useful eviction이 `chat <- rag`보다 크게 관측되어, antagonist pressure 증가가 Chat hit rate 감소의 cache-level 원인으로 연결되는가?
 
 ### Case 2. Cache policy 비교
 
