@@ -45,14 +45,14 @@ su - ubuntu -c '
     # 이미 폴더가 있으면 에러가 날 수 있으니 체크
     if [ ! -d "JJ-Distributed-LLM-Inference" ]; then
         echo ">>> Cloning JJ-Distributed-LLM-Inference..."
-        git clone -b research/QuotaServe-supplement https://<your_github_token>@github.com/zero-uuuuk/JJ-Distributed-LLM-Inference.git
+        git clone -b research/QuotaServe https://<your_github_token>@github.com/zero-uuuuk/JJ-Distributed-LLM-Inference.git
         echo ">>> [SUCCESS] JJ-Distributed-LLM-Inference cloned."
     fi
 
     # Git Clone (2)
     if [ ! -d "vllm" ]; then
         echo ">>> Cloning vllm..."
-        git clone -b research/QuotaServe-temp https://github.com/zero-uuuuk/vllm
+        git clone -b research/QuotaServe https://github.com/zero-uuuuk/vllm
         echo ">>> [SUCCESS] vllm cloned."
     fi
 
