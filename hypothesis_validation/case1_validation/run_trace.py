@@ -1,3 +1,11 @@
+"""역할: 단일 JSONL trace를 vLLM 서버로 전송해 workload별 baseline 지표를 측정한다.
+
+상세 과정:
+  1. 입력 trace를 읽고 지정한 개수만큼 요청을 선택한다.
+  2. Poisson 도착 과정으로 요청을 vLLM OpenAI 호환 API에 전송한다.
+  3. 요청별 TTFT·TPOT·prefix cache hit rate를 기록한다.
+  4. workload 태그별 output token cap과 SLO 기준으로 요약 지표를 저장한다.
+"""
 from __future__ import annotations
 
 import argparse
@@ -13,8 +21,13 @@ from tqdm import tqdm
 
 
 DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
-DEFAULT_MAX_TOKENS = 128
-DEFAULT_TIMEOUT_SECONDS = 600
+DEFAULT_TIMEOUT_SECONDS = 1800
+DEFAULT_FALLBACK_MAX_TOKENS = 128
+DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
+    "chat": 691,
+    "rag": 205,
+    "longctx": 41,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +53,19 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    resolved_path = path.expanduser().resolve()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def resolve_summary_path(output_path: Path) -> Path:
+    """요약 JSON은 원본 JSONL과 같은 디렉토리에 저장한다."""
+    resolved_output = output_path.expanduser().resolve()
+    return resolved_output.with_name(f"{resolved_output.stem}_summary.json")
+
+
 # ---------------------------------------------------------------------------
 # CLI 처리
 # ---------------------------------------------------------------------------
@@ -55,20 +81,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--url", default=None)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--qps", type=float, default=2.0)
-    parser.add_argument("--max-concurrency", type=int, default=16)
-    parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
-    parser.add_argument("--num-prompts", type=int, default=500)
+    parser.add_argument("--max-concurrency", type=int, default=32)
+    parser.add_argument("--num-prompts", type=int, default=1000)
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument(
         "--workload-tag",
         default="default",
-        help="결과 row에 붙을 workload 레이블 (예: chat, rag)",
+        help="결과 row에 붙을 workload 레이블 (예: chat, rag, longctx)",
     )
     parser.add_argument(
         "--slo-ms",
         type=float,
         default=None,
-        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=500, rag=2000)",
+        help="TTFT SLO 기준값 (ms). 지정 시 SLO attainment를 출력합니다. (예: chat=400, rag=400, longctx=400)",
     )
     return parser.parse_args()
 
@@ -88,6 +113,10 @@ def resolve_default_url(api: str, url: str | None) -> str:
 
 def percentile(values: list[float], p: float) -> float:
     return float(np.percentile(values, p)) if values else float("nan")
+
+
+def mean(values: list[float]) -> float:
+    return float(np.mean(values)) if values else float("nan")
 
 
 def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
@@ -111,11 +140,23 @@ def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_max_tokens(row: dict[str, Any], cli_max_tokens: int) -> int:
-    row_max_tokens = row.get("output_token_len", row.get("output_tokens", cli_max_tokens))
-    if cli_max_tokens == DEFAULT_MAX_TOKENS:
+def resolve_max_token_cap(workload_tag: str) -> int | None:
+    """workload별 trace 최대 output length를 기본 cap으로 사용한다."""
+    return DEFAULT_MAX_TOKENS_BY_WORKLOAD.get(workload_tag.lower())
+
+
+def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
+    """요청별 output_token_len을 보존하되 workload별 최대값으로 truncation을 방지한다."""
+    row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
+    token_cap = resolve_max_token_cap(workload_tag)
+
+    if row_max_tokens is None and token_cap is None:
+        return DEFAULT_FALLBACK_MAX_TOKENS
+    if row_max_tokens is None:
+        return int(token_cap)
+    if token_cap is None:
         return int(row_max_tokens)
-    return int(min(row_max_tokens, cli_max_tokens))
+    return int(min(row_max_tokens, token_cap))
 
 
 def messages_from_row(row: dict[str, Any]) -> list[dict[str, str]]:
@@ -139,13 +180,16 @@ def prompt_from_row(row: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def build_payload(row: dict[str, Any], model: str, max_tokens: int, api: str) -> dict[str, Any]:
+def build_payload(
+    row: dict[str, Any], model: str, max_tokens: int, api: str, workload_tag: str = ""
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "temperature": 0.0,
         "stream": True,
         "stream_options": {"include_usage": True},
+        "user": workload_tag,  # vLLM 내부 block workload 태그 전달 — eviction attribution 계측용
     }
     if api == "chat":
         payload["messages"] = messages_from_row(row)
@@ -174,13 +218,12 @@ async def send_one(
     url: str,
     model: str,
     row: dict[str, Any],
-    cli_max_tokens: int,
     semaphore: asyncio.Semaphore,
     api: str,
     workload_tag: str,
 ) -> dict[str, Any]:
-    actual_max_tokens = resolve_max_tokens(row, cli_max_tokens)
-    payload = build_payload(row, model, actual_max_tokens, api)
+    actual_max_tokens = resolve_max_tokens(row, workload_tag)
+    payload = build_payload(row, model, actual_max_tokens, api, workload_tag)
 
     async with semaphore:
         start_perf = time.perf_counter()
@@ -282,7 +325,6 @@ async def consumer(
     session: aiohttp.ClientSession,
     url: str,
     model: str,
-    max_tokens: int,
     semaphore: asyncio.Semaphore,
     results: list[dict[str, Any]],
     api: str,
@@ -294,7 +336,7 @@ async def consumer(
         if row is None:
             await queue.put(None)
             return
-        result = await send_one(session, url, model, row, max_tokens, semaphore, api, workload_tag)
+        result = await send_one(session, url, model, row, semaphore, api, workload_tag)
         results.append(result)
         status = "ERR" if result["error"] else "OK"
         ttft_text = f"{result['ttft'] * 1000:.0f}ms" if result["ttft"] else "-"
@@ -307,21 +349,15 @@ async def consumer(
 # ---------------------------------------------------------------------------
 
 
-def print_summary(
+def build_summary(
     results: list[dict[str, Any]],
     duration_seconds: float,
     slo_ms: float | None,
     workload_tag: str,
-) -> None:
+) -> dict[str, Any]:
+    """콘솔 출력과 파일 저장에 함께 쓰는 집계 지표를 생성한다."""
     ok = [r for r in results if r["error"] is None and r["ttft"] is not None]
     failed = [r for r in results if r["error"] is not None or r["ttft"] is None]
-
-    print(f"\n{'=' * 50}")
-    print(f"전체: {len(results)}  성공: {len(ok)}  실패: {len(failed)}  소요: {duration_seconds:.1f}s")
-
-    if not ok:
-        print(f"  [{workload_tag.upper()}] 성공한 요청 없음 (실패: {len(failed)})")
-        return
 
     ttfts = [r["ttft"] * 1000 for r in ok]
     e2es = [r["e2e"] * 1000 for r in ok]
@@ -330,44 +366,97 @@ def print_summary(
     total_input = sum((r["prompt_tokens"] or 0) for r in ok)
     total_output = sum((r["completion_tokens"] or 0) for r in ok)
     hit_rates = [r["hit_rate"] for r in ok if r["hit_rate"] is not None]
+    slo_attainment = (
+        sum(1 for t in ttfts if t <= slo_ms) / len(results)
+        if slo_ms is not None and results
+        else None
+    )
 
-    print(f"\n  [{workload_tag.upper()}]  성공: {len(ok)}  실패: {len(failed)}")
-    print(f"  입력 토큰: {total_input}  출력 토큰: {total_output}")
-    print(f"  처리량: {len(ok) / duration_seconds:.2f} req/s  {total_output / duration_seconds:.1f} tok/s")
-    if slo_ms is not None:
-        slo_attainment = sum(1 for t in ttfts if t <= slo_ms) / len(ttfts)
-        print(f"  SLO attainment (TTFT ≤ {slo_ms:.0f}ms): {slo_attainment:.1%}")
-    if hit_rates:
-        print(f"  Cache hit rate: mean={np.mean(hit_rates):.3f}  p50={percentile(hit_rates, 50):.3f}")
+    return {
+        "workload": workload_tag,
+        "duration_seconds": duration_seconds,
+        "n_total": len(results),
+        "n_ok": len(ok),
+        "n_failed": len(failed),
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "throughput_req_per_s": len(ok) / duration_seconds if duration_seconds > 0 else 0.0,
+        "throughput_tok_per_s": total_output / duration_seconds if duration_seconds > 0 else 0.0,
+        "slo_ms": slo_ms,
+        "slo_attainment": slo_attainment,
+        "hit_rate_mean": mean(hit_rates),
+        "hit_rate_p50": percentile(hit_rates, 50),
+        "ttft_ms_mean": mean(ttfts),
+        "ttft_ms_p50": percentile(ttfts, 50),
+        "ttft_ms_p95": percentile(ttfts, 95),
+        "ttft_ms_p99": percentile(ttfts, 99),
+        "tpot_ms_mean": mean(tpots),
+        "tpot_ms_p50": percentile(tpots, 50),
+        "tpot_ms_p95": percentile(tpots, 95),
+        "tpot_ms_p99": percentile(tpots, 99),
+        "itl_ms_mean": mean(flat_itls),
+        "itl_ms_p50": percentile(flat_itls, 50),
+        "itl_ms_p95": percentile(flat_itls, 95),
+        "itl_ms_p99": percentile(flat_itls, 99),
+        "e2e_ms_mean": mean(e2es),
+        "e2e_ms_p50": percentile(e2es, 50),
+        "e2e_ms_p95": percentile(e2es, 95),
+        "e2e_ms_p99": percentile(e2es, 99),
+        "failed_examples": [
+            {"request_id": r.get("request_id"), "error": r.get("error")}
+            for r in failed[:3]
+        ],
+    }
+
+
+def print_summary(summary: dict[str, Any]) -> None:
+    """집계 지표를 콘솔에 출력한다."""
+    print(f"\n{'=' * 50}")
     print(
-        f"  TTFT(ms) mean={np.mean(ttfts):.1f} "
-        f"p50={percentile(ttfts, 50):.1f} "
-        f"p95={percentile(ttfts, 95):.1f} "
-        f"p99={percentile(ttfts, 99):.1f}"
+        f"전체: {summary['n_total']}  성공: {summary['n_ok']}  "
+        f"실패: {summary['n_failed']}  소요: {summary['duration_seconds']:.1f}s"
     )
-    if tpots:
+
+    if summary["n_ok"] == 0:
+        print(f"  [{summary['workload'].upper()}] 성공한 요청 없음 (실패: {summary['n_failed']})")
+        return
+
+    print(f"\n  [{summary['workload'].upper()}]  성공: {summary['n_ok']}  실패: {summary['n_failed']}")
+    print(f"  입력 토큰: {summary['total_input_tokens']}  출력 토큰: {summary['total_output_tokens']}")
+    print(f"  처리량: {summary['throughput_req_per_s']:.2f} req/s  {summary['throughput_tok_per_s']:.1f} tok/s")
+    if summary["slo_attainment"] is not None:
+        print(f"  SLO attainment (TTFT ≤ {summary['slo_ms']:.0f}ms): {summary['slo_attainment']:.1%}")
+    if summary["hit_rate_mean"] == summary["hit_rate_mean"]:
+        print(f"  Cache hit rate: mean={summary['hit_rate_mean']:.3f}  p50={summary['hit_rate_p50']:.3f}")
+    print(
+        f"  TTFT(ms) mean={summary['ttft_ms_mean']:.1f} "
+        f"p50={summary['ttft_ms_p50']:.1f} "
+        f"p95={summary['ttft_ms_p95']:.1f} "
+        f"p99={summary['ttft_ms_p99']:.1f}"
+    )
+    if summary["tpot_ms_mean"] == summary["tpot_ms_mean"]:
         print(
-            f"  TPOT(ms) mean={np.mean(tpots):.1f} "
-            f"p50={percentile(tpots, 50):.1f} "
-            f"p95={percentile(tpots, 95):.1f} "
-            f"p99={percentile(tpots, 99):.1f}"
+            f"  TPOT(ms) mean={summary['tpot_ms_mean']:.1f} "
+            f"p50={summary['tpot_ms_p50']:.1f} "
+            f"p95={summary['tpot_ms_p95']:.1f} "
+            f"p99={summary['tpot_ms_p99']:.1f}"
         )
-    if flat_itls:
+    if summary["itl_ms_mean"] == summary["itl_ms_mean"]:
         print(
-            f"  ITL(ms)  mean={np.mean(flat_itls):.1f} "
-            f"p50={percentile(flat_itls, 50):.1f} "
-            f"p95={percentile(flat_itls, 95):.1f} "
-            f"p99={percentile(flat_itls, 99):.1f}"
+            f"  ITL(ms)  mean={summary['itl_ms_mean']:.1f} "
+            f"p50={summary['itl_ms_p50']:.1f} "
+            f"p95={summary['itl_ms_p95']:.1f} "
+            f"p99={summary['itl_ms_p99']:.1f}"
         )
     print(
-        f"  E2E(ms)  mean={np.mean(e2es):.1f} "
-        f"p50={percentile(e2es, 50):.1f} "
-        f"p95={percentile(e2es, 95):.1f} "
-        f"p99={percentile(e2es, 99):.1f}"
+        f"  E2E(ms)  mean={summary['e2e_ms_mean']:.1f} "
+        f"p50={summary['e2e_ms_p50']:.1f} "
+        f"p95={summary['e2e_ms_p95']:.1f} "
+        f"p99={summary['e2e_ms_p99']:.1f}"
     )
-    if failed:
+    if summary["failed_examples"]:
         print("\n  첫 실패 3개:")
-        for r in failed[:3]:
+        for r in summary["failed_examples"]:
             print(f"    {r['request_id']} | {r['error']}")
 
 
@@ -404,7 +493,6 @@ async def main_async(args: argparse.Namespace) -> None:
                         session=session,
                         url=url,
                         model=args.model,
-                        max_tokens=args.max_tokens,
                         semaphore=semaphore,
                         results=results,
                         api=args.api,
@@ -418,9 +506,14 @@ async def main_async(args: argparse.Namespace) -> None:
             await asyncio.gather(*consumer_tasks)
         duration_seconds = time.perf_counter() - start_perf
 
+    summary = build_summary(results, duration_seconds, args.slo_ms, args.workload_tag)
+    summary_path = resolve_summary_path(args.output)
+
     write_jsonl(args.output, results)
-    print_summary(results, duration_seconds, args.slo_ms, args.workload_tag)
+    write_json(summary_path, summary)
+    print_summary(summary)
     print(f"\n저장 완료: {args.output}")
+    print(f"요약 저장 완료: {summary_path}")
 
 
 def main() -> None:

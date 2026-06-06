@@ -6,6 +6,9 @@
 >
 > EC2 인스턴스 시작 시 `User Data` 섹션에 입력하여 vLLM 및 프로젝트 환경을 구축을 위한 스크립트입니다.
 
+> [!NOTE]
+> 본 실험 환경은 기본적으로 EC2 `g5.xlarge` 인스턴스를 사용합니다.
+
 
 ```bash
 #!/bin/bash
@@ -42,14 +45,14 @@ su - ubuntu -c '
     # 이미 폴더가 있으면 에러가 날 수 있으니 체크
     if [ ! -d "JJ-Distributed-LLM-Inference" ]; then
         echo ">>> Cloning JJ-Distributed-LLM-Inference..."
-        git clone -b research/QuotaServe https://<your_github_token>@github.com/zero-uuuuk/JJ-Distributed-LLM-Inference.git
+        git clone -b research/QuotaServe-supplement https://<your_github_token>@github.com/zero-uuuuk/JJ-Distributed-LLM-Inference.git
         echo ">>> [SUCCESS] JJ-Distributed-LLM-Inference cloned."
     fi
 
     # Git Clone (2)
     if [ ! -d "vllm" ]; then
         echo ">>> Cloning vllm..."
-        git clone https://github.com/zero-uuuuk/vllm
+        git clone -b research/QuotaServe-temp https://github.com/zero-uuuuk/vllm
         echo ">>> [SUCCESS] vllm cloned."
     fi
 
