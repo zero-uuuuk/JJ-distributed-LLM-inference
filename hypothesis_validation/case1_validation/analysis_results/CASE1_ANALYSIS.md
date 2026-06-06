@@ -279,3 +279,5 @@ Longctx mixed에서는 전체 eviction의 `57.3%`가 `longctx <- longctx`다. �
 *Figure 10. `chat <- longctx`의 `time_until_next_reuse`는 mean `26.13s`, p50 `26.77s`, p95 `42.22s`다.*
 
 Figure 9는 useful Chat block이 think-gap 중간에 evict되고, 같은 think-gap 안에서 다시 필요해지는 구조를 보여준다. Figure 10은 그중 `chat <- longctx`에 초점을 맞춘 reuse wait 분포다. `time_until_next_reuse`는 evict된 Chat cache가 다시 필요해진 시점까지의 시간이며, Longctx가 밀어낸 Chat block은 수십 초 뒤 다음 turn에서 다시 필요해진다. 이는 `HYPOTHESIS.md` 2절의 reuse 시간 척도 불일치 설명과 일치한다.
+
+이는 LRU baseline에서 Chat block이 think-gap을 버티지 못하고, 다음 turn에서 재사용되기 전에 evict되는 현상을 직접 보여준다. 즉 문제는 cache block이 재사용되지 않는 것이 아니라, 재사용 시점까지 살아남지 못한다는 데 있다.
