@@ -1,6 +1,6 @@
 # RUN_MIXED
 
-Chat + Agent mixed 실험용 runner입니다.
+Chat + Agent mixed runner.
 
 ```text
 runner: hypothesis_validation/agent_validation/run_mixed_agent.py
@@ -11,11 +11,12 @@ shape:  Chat 100 conv x 10 turns = 1000 requests
 gap:    Agent previous finish_time + sampled tool gap
 ```
 
-## 1. Trace 만들기
+## Build Traces
 
 Chat trace:
 
 ```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference
 python workloads/sharegpt/build_sharegpt_workload.py \
   --num-conversations 100 \
   --min-turns 10 \
@@ -34,21 +35,41 @@ python workloads/traj/build_traj_agent_workload.py \
   --num-sessions 100 \
   --max-steps 10 \
   --min-steps 10 \
+  --max-prompt-chars 24000 \
   --tokenizer approx \
   --output workloads/traj/traj_agent_100session_10step.jsonl
 ```
 
-## 2. Main: exponential 2s tool gap
+## Start vLLM: APC ON
 
-Agent main sanity는 exponential gap을 사용합니다.
+```bash
+cd /home/ubuntu/vllm
+source .venv/bin/activate
+mkdir -p /home/ubuntu/vllm/eviction_logs
+
+VLLM_SERVER_DEV_MODE=1 \
+VLLM_EVICTION_LOG=/home/ubuntu/vllm/eviction_logs/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl \
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --enable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 12288 \
+  --max-num-seqs 32 \
+  --gpu-memory-utilization 0.6 \
+  --port 8000
+```
+
+If KV-cache pressure appears, lower `--max-num-seqs` to `16`.
+
+## Run Mixed: APC ON
+
+Main gap:
 
 ```python
 tool_gap = min(random.expovariate(1 / 2.0), 20.0)
 ```
 
-APC ON:
-
 ```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference
 python hypothesis_validation/agent_validation/run_mixed_agent.py \
   --chat-trace workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --agent-trace workloads/traj/traj_agent_100session_10step.jsonl \
@@ -66,12 +87,28 @@ python hypothesis_validation/agent_validation/run_mixed_agent.py \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
   --agent-slo-ms 10000 \
-  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len16384.jsonl
+  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl
 ```
 
-APC OFF:
+## Start vLLM: APC OFF
 
 ```bash
+cd /home/ubuntu/vllm
+source .venv/bin/activate
+
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --disable-prefix-caching \
+  --enable-prompt-tokens-details \
+  --max-model-len 12288 \
+  --max-num-seqs 32 \
+  --gpu-memory-utilization 0.6 \
+  --port 8000
+```
+
+## Run Mixed: APC OFF
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference
 python hypothesis_validation/agent_validation/run_mixed_agent.py \
   --chat-trace workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --agent-trace workloads/traj/traj_agent_100session_10step.jsonl \
@@ -89,12 +126,10 @@ python hypothesis_validation/agent_validation/run_mixed_agent.py \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
   --agent-slo-ms 10000 \
-  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_exp2_cap20_apc_off_len16384.jsonl
+  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_exp2_cap20_apc_off_len12288.jsonl
 ```
 
-## 3. Fixed 2s baseline
-
-고정 gap을 쓰는 baseline은 2초로 둡니다.
+## Fixed 2s Baseline
 
 ```bash
 python hypothesis_validation/agent_validation/run_mixed_agent.py \
@@ -110,19 +145,19 @@ python hypothesis_validation/agent_validation/run_mixed_agent.py \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
   --agent-slo-ms 10000 \
-  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_fixed2_apc_on_len16384.jsonl
+  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_fixed2_apc_on_len12288.jsonl
 ```
 
-## 4. Workload tags
+## Workload Tags
 
-Mixed runner는 OpenAI `user` field에 workload tag를 넣습니다.
+The mixed runner sets the OpenAI `user` field:
 
 ```text
 chat request  -> user="chat"
 agent request -> user="agent"
 ```
 
-eviction attribution이 켜져 있으면 이 tag를 기준으로 아래 방향을 볼 수 있습니다.
+Eviction attribution can then use these directions:
 
 ```text
 chat <- agent

@@ -117,6 +117,15 @@ def parse_args() -> argparse.Namespace:
         help="Maximum characters kept from each observation. 0 means no limit.",
     )
     parser.add_argument(
+        "--max-prompt-chars",
+        type=int,
+        default=24_000,
+        help=(
+            "Drop a whole session if any selected request prompt exceeds this "
+            "many total message characters. 0 means no limit."
+        ),
+    )
+    parser.add_argument(
         "--tokenizer",
         default=DEFAULT_TOKENIZER,
         help="Tokenizer for output_token_len. Use 'approx' to avoid transformers.",
@@ -378,13 +387,15 @@ def select_sessions(
     rows: Iterable[dict[str, Any]],
     args: argparse.Namespace,
     min_steps: int,
-) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]], list[int]]], dict[str, int]]:
-    selected: list[tuple[dict[str, Any], list[dict[str, Any]], list[int]]] = []
+    tokenizer: Any,
+) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]], list[int], list[dict[str, Any]]]], dict[str, int]]:
+    selected: list[tuple[dict[str, Any], list[dict[str, Any]], list[int], list[dict[str, Any]]]] = []
     stats = {
         "scanned_rows": 0,
         "filtered_rows": 0,
         "missing_steps_rows": 0,
         "too_few_steps_rows": 0,
+        "overlong_session_rows": 0,
     }
 
     for row in rows:
@@ -408,15 +419,30 @@ def select_sessions(
             stats["too_few_steps_rows"] += 1
             continue
 
-        selected.append((row, steps, agent_indices[: args.max_steps]))
+        selected_indices = agent_indices[: args.max_steps]
+        session_rows = build_session_rows(
+            row=row,
+            steps=steps,
+            agent_indices=selected_indices,
+            tokenizer=tokenizer,
+            max_output_tokens=args.max_output_tokens,
+            max_step_msg_chars=args.max_step_msg_chars,
+            max_observation_chars=args.max_observation_chars,
+        )
+        if session_over_prompt_limit(session_rows, args.max_prompt_chars):
+            stats["overlong_session_rows"] += 1
+            continue
+
+        selected.append((row, steps, selected_indices, session_rows))
         if args.num_sessions > 0 and len(selected) >= args.num_sessions:
             break
 
     if args.num_sessions > 0 and len(selected) < args.num_sessions:
         raise SystemExit(
             f"Only found {len(selected)} trajectories with at least {min_steps} "
-            f"selected agent steps; requested {args.num_sessions} sessions. "
-            "Lower --num-sessions/--min-steps, allow no-tool steps, or relax filters."
+            f"selected agent steps under max_prompt_chars={args.max_prompt_chars}; "
+            f"requested {args.num_sessions} sessions. Lower --num-sessions/--min-steps, "
+            "increase --max-prompt-chars, allow no-tool steps, or relax filters."
         )
 
     return selected, stats
@@ -502,6 +528,20 @@ def build_session_rows(
     return session_rows
 
 
+def prompt_char_len(row: dict[str, Any]) -> int:
+    messages = row.get("messages") or []
+    return sum(len(str(message.get("content", ""))) for message in messages)
+
+
+def session_over_prompt_limit(
+    session_rows: list[dict[str, Any]],
+    max_prompt_chars: int,
+) -> bool:
+    if max_prompt_chars <= 0:
+        return False
+    return any(prompt_char_len(row) > max_prompt_chars for row in session_rows)
+
+
 def flatten_sessions(
     session_rows: list[list[dict[str, Any]]],
     order: str,
@@ -521,19 +561,8 @@ def flatten_sessions(
 def build_rows(args: argparse.Namespace, min_steps: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
     tokenizer = load_tokenizer(args.tokenizer)
     source_rows = load_hf_rows(args)
-    selected, stats = select_sessions(source_rows, args, min_steps)
-    all_session_rows = [
-        build_session_rows(
-            row=row,
-            steps=steps,
-            agent_indices=agent_indices,
-            tokenizer=tokenizer,
-            max_output_tokens=args.max_output_tokens,
-            max_step_msg_chars=args.max_step_msg_chars,
-            max_observation_chars=args.max_observation_chars,
-        )
-        for row, steps, agent_indices in selected
-    ]
+    selected, stats = select_sessions(source_rows, args, min_steps, tokenizer)
+    all_session_rows = [session_rows for _, _, _, session_rows in selected]
     return flatten_sessions(all_session_rows, args.order), stats
 
 
@@ -573,12 +602,14 @@ def main() -> None:
     print(f"filtered_rows: {stats['filtered_rows']}")
     print(f"missing_steps_rows: {stats['missing_steps_rows']}")
     print(f"too_few_steps_rows: {stats['too_few_steps_rows']}")
+    print(f"overlong_session_rows: {stats['overlong_session_rows']}")
     print(f"sessions: {len(sessions)}")
     print(f"requests: {requests}")
     print(f"avg_steps_per_session: {avg_steps:.2f}")
     print(f"order: {args.order}")
     print(f"min_steps: {min_steps}")
     print(f"max_steps: {args.max_steps}")
+    print(f"max_prompt_chars: {args.max_prompt_chars}")
     print(
         "output_token_len min/avg/max: "
         f"{min(output_lens) if output_lens else 0}/"
