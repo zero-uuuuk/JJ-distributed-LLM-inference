@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from run_mixed_tau import (
+from run_mixed_agent import (
     AGENT_VALIDATION_DIR,
     DEFAULT_AGENT_SLO_MS,
     DEFAULT_AGENT_TRACE,
@@ -31,7 +31,7 @@ DEFAULT_OUTPUT_DIR = AGENT_VALIDATION_DIR / "raw_results"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run tau2 Agent-only validation with completion-based tool gaps.",
+        description="Run trajectory Agent-only validation with completion-based tool gaps.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -43,22 +43,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--phase",
-        choices=("agent_only_fixed", "agent_only_gaussian"),
+        choices=("agent_only_fixed", "agent_only_gaussian", "agent_only_exponential"),
         default="agent_only_fixed",
     )
     parser.add_argument("--agent-target-rps", type=float, default=5.0)
     parser.add_argument("--agent-steps-per-session", type=float, default=10.0)
     parser.add_argument(
         "--agent-tool-gap-mode",
-        choices=("fixed", "gaussian"),
+        choices=("fixed", "gaussian", "exponential"),
         default=None,
         help="Defaults from --phase if omitted.",
     )
-    parser.add_argument("--agent-tool-gap-seconds", type=float, default=5.0)
-    parser.add_argument("--agent-tool-gap-mean", type=float, default=5.0)
+    parser.add_argument("--agent-tool-gap-seconds", type=float, default=2.0)
+    parser.add_argument("--agent-tool-gap-mean", type=float, default=2.0)
     parser.add_argument("--agent-tool-gap-std", type=float, default=2.0)
-    parser.add_argument("--agent-tool-gap-min", type=float, default=1.0)
-    parser.add_argument("--agent-tool-gap-max", type=float, default=15.0)
+    parser.add_argument("--agent-tool-gap-min", type=float, default=0.0)
+    parser.add_argument("--agent-tool-gap-max", type=float, default=20.0)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -101,8 +101,9 @@ async def main_async(args: argparse.Namespace) -> None:
     agent_trace = resolve_trace_path(
         args.agent_trace,
         "Agent",
-        "  cd workloads/tau2 && python build_tau2_agent_workload.py "
-        "--output tau2_agent_100session_10step.jsonl --tokenizer approx",
+        "  cd workloads/traj && python build_traj_agent_workload.py "
+        "--num-sessions 100 --max-steps 10 --min-steps 10 "
+        "--output traj_agent_100session_10step.jsonl --tokenizer approx",
     )
     output_path = resolve_output_path(args)
     output_path.parent.mkdir(parents=True, exist_ok=True)

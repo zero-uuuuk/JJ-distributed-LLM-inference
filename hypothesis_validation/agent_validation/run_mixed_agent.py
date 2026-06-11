@@ -18,14 +18,13 @@ DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_AGENT_SLO_MS = 400.0
 DEFAULT_CHAT_SLO_MS = 400.0
 DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
-    "agent": 128,
     "chat": 691,
 }
 
 AGENT_VALIDATION_DIR = Path(__file__).resolve().parent
 HYPOTHESIS_DIR = AGENT_VALIDATION_DIR.parent
 REPO_ROOT = HYPOTHESIS_DIR.parent
-DEFAULT_AGENT_TRACE = REPO_ROOT / "workloads/tau2/tau2_agent_100session_10step.jsonl"
+DEFAULT_AGENT_TRACE = REPO_ROOT / "workloads/traj/traj_agent_100session_10step.jsonl"
 DEFAULT_CHAT_TRACE = REPO_ROOT / "workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl"
 DEFAULT_OUTPUT_DIR = AGENT_VALIDATION_DIR / "raw_results"
 
@@ -87,29 +86,29 @@ def resolve_summary_path(output_path: Path) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run Chat + tau2 Agent mixed validation with completion-based tool gaps.",
+        description="Run Chat + trajectory Agent mixed validation with completion-based tool gaps.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--agent-trace", type=Path, default=DEFAULT_AGENT_TRACE)
     parser.add_argument("--chat-trace", type=Path, default=DEFAULT_CHAT_TRACE)
     parser.add_argument(
         "--phase",
-        choices=("chat_agent_fixed", "chat_agent_gaussian"),
+        choices=("chat_agent_fixed", "chat_agent_gaussian", "chat_agent_exponential"),
         default="chat_agent_fixed",
     )
     parser.add_argument("--agent-target-rps", type=float, default=5.0)
     parser.add_argument("--agent-steps-per-session", type=float, default=10.0)
     parser.add_argument(
         "--agent-tool-gap-mode",
-        choices=("fixed", "gaussian"),
+        choices=("fixed", "gaussian", "exponential"),
         default=None,
         help="Defaults from --phase if omitted.",
     )
-    parser.add_argument("--agent-tool-gap-seconds", type=float, default=5.0)
-    parser.add_argument("--agent-tool-gap-mean", type=float, default=5.0)
+    parser.add_argument("--agent-tool-gap-seconds", type=float, default=2.0)
+    parser.add_argument("--agent-tool-gap-mean", type=float, default=2.0)
     parser.add_argument("--agent-tool-gap-std", type=float, default=2.0)
-    parser.add_argument("--agent-tool-gap-min", type=float, default=1.0)
-    parser.add_argument("--agent-tool-gap-max", type=float, default=15.0)
+    parser.add_argument("--agent-tool-gap-min", type=float, default=0.0)
+    parser.add_argument("--agent-tool-gap-max", type=float, default=20.0)
     parser.add_argument("--chat-qps", type=float, default=5.0)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--url", default=DEFAULT_URL)
@@ -142,6 +141,8 @@ def resolve_output_path(args: argparse.Namespace) -> Path:
 def resolve_gap_mode(phase: str, explicit_mode: str | None) -> str:
     if explicit_mode is not None:
         return explicit_mode
+    if "exponential" in phase:
+        return "exponential"
     if "gaussian" in phase:
         return "gaussian"
     return "fixed"
@@ -379,6 +380,9 @@ def sample_tool_gap(
 ) -> float:
     if mode == "fixed":
         return max(0.0, float(fixed_seconds))
+    if mode == "exponential":
+        sampled = float(rng.exponential(mean_seconds))
+        return min(sampled, float(max_seconds))
     sampled = float(rng.normal(mean_seconds, std_seconds))
     return max(float(min_seconds), min(sampled, float(max_seconds)))
 
@@ -691,8 +695,9 @@ async def main_async(args: argparse.Namespace) -> None:
     agent_trace = resolve_trace_path(
         args.agent_trace,
         "Agent",
-        "  cd workloads/tau2 && python build_tau2_agent_workload.py "
-        "--output tau2_agent_100session_10step.jsonl --tokenizer approx",
+        "  cd workloads/traj && python build_traj_agent_workload.py "
+        "--num-sessions 100 --max-steps 10 --min-steps 10 "
+        "--output traj_agent_100session_10step.jsonl --tokenizer approx",
     )
     chat_trace = resolve_trace_path(
         args.chat_trace,
