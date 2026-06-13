@@ -88,11 +88,11 @@ uv pip install -r requirements.txt
 
 ```bash
 cd workloads/sharegpt
-python build_sharegpt_workload.py \
-  --num-conversations 100 \
-  --min-turns 10 \
-  --max-turns 10 \
-  --order turn-major \
+python build_sharegpt_workload.py '
+  --num-conversations 100 '
+  --min-turns 10 '
+  --max-turns 10 '
+  --order turn-major '
   --output sharegpt_victim_100conv_10turn.jsonl
 ```
 
