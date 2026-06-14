@@ -270,14 +270,24 @@ Longctx mixed에서는 전체 eviction의 `57.3%`가 `longctx <- longctx`다. �
 
 ### 11.5 Evicted Chat block의 재사용 시간
 
-![Useful Chat Cache Blocks Evicted During Think Gap](case1_analysis_image9_chat_eviction_think_gap.png)
+![Useful Chat Cache Blocks Evicted During Think Gap](case1_analysis_image9a_chat_eviction_think_gap_timeline.png)
 
-*Figure 9. useful Chat cache block이 마지막 접근 이후 eviction되고, 이후 다시 reuse되기까지의 시간 구조. mixed의 `chat <- chat`, `chat <- rag` 모두 eviction 이후 reuse까지의 전체 시간이 Chat think-gap scale(`20-30s`)에 들어온다.*
+*Figure 9a. useful Chat cache block이 마지막 접근 이후 eviction되고, 이후 다시 reuse되기까지의 시간 구조. mixed의 `chat <- chat`, `chat <- rag` 모두 eviction 이후 reuse까지의 전체 시간이 Chat think-gap scale(`20-30s`)에 들어온다.*
+
+| Case | Direction | n | Idle before eviction | Reuse wait after eviction | Last access to reuse |
+|---|---|---:|---:|---:|---:|
+| Chat-only | `chat <- chat` | 27,798 | 13.5s | 8.0s | 21.4s |
+| Mixed | `chat <- chat` | 18,321 | 12.1s | 17.0s | 29.1s |
+| Mixed | `chat <- rag` | 15,433 | 12.1s | 15.5s | 27.6s |
+
+![Useful Chat Cache Reuse Tracks Think Gap](case1_analysis_image9b_chat_reuse_think_gap_overlay.png)
+
+*Figure 9b. Chat-only에서는 inter-turn think-gap과 useful Chat cache reuse gap이 거의 같은 위치에 놓인다. Mixed에서는 `chat <- rag`로 evict된 Chat block의 reuse gap도 같은 초 단위 구간에 남아 있어, block이 쓸모없어서가 아니라 재사용 전에 밀려났음을 보여준다.*
 
 ![Reuse Time After Chat Cache Evicted by Longctx](case1_analysis_image10_chat_longctx_reuse_time.png)
 
 *Figure 10. `chat <- longctx`의 `time_until_next_reuse`는 mean `26.13s`, p50 `26.77s`, p95 `42.22s`다.*
 
-Figure 9는 useful Chat block이 think-gap 중간에 evict되고, 같은 think-gap 안에서 다시 필요해지는 구조를 보여준다. Figure 10은 그중 `chat <- longctx`에 초점을 맞춘 reuse wait 분포다. `time_until_next_reuse`는 evict된 Chat cache가 다시 필요해진 시점까지의 시간이며, Longctx가 밀어낸 Chat block은 수십 초 뒤 다음 turn에서 다시 필요해진다. 이는 `HYPOTHESIS.md` 2절의 reuse 시간 척도 불일치 설명과 일치한다.
+Figure 9a와 9b는 useful Chat block이 think-gap 중간에 evict되고, 같은 think-gap 안에서 다시 필요해지는 구조를 보여준다. Figure 10은 그중 `chat <- longctx`에 초점을 맞춘 reuse wait 분포다. `time_until_next_reuse`는 evict된 Chat cache가 다시 필요해진 시점까지의 시간이며, Longctx가 밀어낸 Chat block은 수십 초 뒤 다음 turn에서 다시 필요해진다. 이는 `HYPOTHESIS.md` 2절의 reuse 시간 척도 불일치 설명과 일치한다.
 
 이는 LRU baseline에서 Chat block이 think-gap을 버티지 못하고, 다음 turn에서 재사용되기 전에 evict되는 현상을 직접 보여준다. 즉 문제는 cache block이 재사용되지 않는 것이 아니라, 재사용 시점까지 살아남지 못한다는 데 있다.

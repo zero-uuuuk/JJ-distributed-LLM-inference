@@ -1,7 +1,0 @@
-Think-gap / useful eviction summary
-
-chat_only inter-turn gap: n=900 mean=21.072 p50=20.670 p95=24.759
-chat_only chat<-chat last_access_to_reuse: n=27,798 mean=21.873 p50=21.586 p95=26.011
-mixed inter-turn gap: n=900 mean=25.628 p50=24.782 p95=33.608
-mixed chat<-chat last_access_to_reuse: n=18,321 mean=29.083 p50=29.550 p95=34.159
-mixed chat<-rag last_access_to_reuse: n=15,433 mean=27.703 p50=28.907 p95=33.952
