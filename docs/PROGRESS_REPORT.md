@@ -1,4 +1,4 @@
-# Graduation Project Progress Report 1 초안
+# Graduation Project Progress Report 1
 
 ## 기본 정보
 
@@ -28,7 +28,7 @@
 
 [2026-06-04] Case 1 분석 범위를 Chat+RAG에서 Chat+Longctx와 Chat+Agent 조건으로 확장했다. RAG prompt가 예상보다 짧아 강한 cache pressure를 만들기에는 제한이 있었으므로, HotpotQA distractor 기반 Longctx를 cold workload로 추가했다. 또한 TerminalBench trajectories 기반 Agent를 warm workload로 두어, tool-calling gap 이후 재사용될 수 있는 prefix가 eviction에 얼마나 취약한지 함께 확인했다. 각 조건은 APC ON/OFF로 실행하여 cache-specific gain, hit rate, TTFT, SLO, cross-workload eviction, useful eviction을 비교했다.
 
-![Workload Figure 2. Workload별 prompt token 분포](workloads/token_analysis/prompt_token_distribution.png)
+![Workload Figure 2. Workload별 prompt token 분포](../workloads/token_analysis/prompt_token_distribution.png)
 
 [2026-06-06] Case 1 분석을 가설과 더 직접적으로 연결했다. 이 단계에서 LRU의 recency 기반 한계, Chat think-gap, Agent tool-calling gap, eviction 이후 재사용까지의 시간 구조를 분석 문서에 반영했다. 결과적으로 mixed workload에서 Chat의 APC gain과 hit rate가 감소하고, Longctx는 cold workload로서 Chat hot cache에 강한 pressure를 주며, Agent는 warm workload로서 높은 useful eviction ratio를 보인다는 현재 결론을 정리했다. 이 분석은 문제가 단순한 cache occupancy가 아니라, workload별 reuse 시점까지 hot cache가 살아남지 못하는 현상이라는 점을 보여준다.
 
@@ -36,31 +36,31 @@
 
 ## 2. 현재 분석 결과
 
-![Figure 1. Chat APC gain](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image1_apc_gain.png)
+![Figure 1. Chat APC gain](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image1_apc_gain.png)
 
 Case 1의 현재 분석 결과는 mixed workload에서 Chat의 prefix cache 이득이 single workload만큼 유지되지 않음을 순서대로 보여준다. 먼저 Figure 1은 APC OFF와 ON의 차이로 계산한 Chat APC gain을 비교한다. Chat-only 조건에서는 APC가 p50 TTFT를 `40.20ms` 줄였지만, Chat+RAG mixed에서는 `13.98ms`, Chat+Longctx mixed에서는 `5.98ms`만 줄였다. 즉 mixed workload에서는 prefix cache를 켜도 single workload에서 얻던 이득이 상당 부분 사라진다. Chat+Agent mixed의 p50 gain은 `237.94ms`로 크게 계산되지만, 이 run은 절대 queue delay가 큰 조건이므로 hit rate와 SLO를 함께 해석한다.
 
-![Figure 2. Chat cache hit rate](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image2_chat_cache_hit_rate.png)
+![Figure 2. Chat cache hit rate](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image2_chat_cache_hit_rate.png)
 
 Figure 2는 APC ON 상태에서 Chat cache hit rate가 어떻게 변하는지 보여준다. Chat-only에서는 hit rate가 `0.280`이었지만, Chat+RAG mixed에서는 `0.088`, Chat+Longctx mixed에서는 `0.082`, Chat+Agent mixed에서는 `0.072`로 감소했다. 이는 mixed workload에서 Chat의 reusable prefix block이 cache에 충분히 남아 있지 못한다는 cache-level 신호다.
 
-![Figure 3. Chat TTFT under APC ON](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image3_chat_ttft_apc_on.png)
+![Figure 3. Chat TTFT under APC ON](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image3_chat_ttft_apc_on.png)
 
-![Figure 4. Chat SLO attainment](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image4_chat_slo.png)
+![Figure 4. Chat SLO attainment](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image4_chat_slo.png)
 
 Figure 3과 Figure 4는 이 cache-level 손해가 실제 serving 품질 저하로 이어짐을 보여준다. Chat p50 TTFT는 single `113.35ms`에서 Chat+RAG mixed `242.65ms`, Chat+Longctx mixed `419.07ms`, Chat+Agent mixed `4187.52ms`로 증가했다. Chat SLO attainment는 single `92.3%`에서 RAG mixed `83.7%`, Longctx mixed `47.1%`, Agent mixed `27.2%`로 감소했다. 특히 Longctx, Agent mixed에서는 queue delay를 포함한 user-facing latency 손해가 매우 크게 나타났다.
 
-![Figure 5. Eviction breakdown in Chat+RAG](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image6_eviction_breakdown_rag.png)
+![Figure 5. Eviction breakdown in Chat+RAG](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image6_eviction_breakdown_rag.png)
 
-![Figure 6. Eviction breakdown in Chat+Longctx](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image7_eviction_breakdown_longctx.png)
+![Figure 6. Eviction breakdown in Chat+Longctx](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image7_eviction_breakdown_longctx.png)
 
-![Figure 7. Eviction breakdown in Chat+Agent](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image8_eviction_breakdown_agent.png)
+![Figure 7. Eviction breakdown in Chat+Agent](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image8_eviction_breakdown_agent.png)
 
 Figure 5, Figure 6, Figure 7은 eviction attribution 결과를 보여준다. Chat+RAG mixed에서는 `chat <- rag` useful eviction이 `14,690`건 관측되었고, Chat+Longctx mixed에서는 `chat <- longctx` useful eviction이 `23,448`건 관측되었다. Chat+Agent mixed에서도 `chat <- agent` useful eviction이 `6,358`건 관측되었다. 이는 단순히 전체 cache occupancy가 높다는 설명보다, 재사용될 수 있었던 Chat hot cache가 다른 workload의 신규 block 생성 때문에 밀려난다는 설명에 더 가깝다.
 
 추가로 TerminalBench trajectories 기반 Agent workload에서는 `agent <- agent` useful eviction이 `53,191`건 관측되었다. 이는 Agent workload가 단순히 cache pressure를 만드는 것에 그치지 않고, 이후 다시 필요해질 수 있는 block도 상당히 많이 evict당한다는 뜻이다.
 
-![Figure 8. Reuse time after Chat cache evicted by Longctx](hypothesis_validation/case1_validation/analysis_results/case1_analysis_image10_chat_eviction_think_gap_timeline.png)
+![Figure 8. Reuse time after Chat cache evicted by Longctx](../hypothesis_validation/case1_validation/analysis_results/case1_analysis_image10_chat_eviction_think_gap_timeline.png)
 
 마지막으로 Figure 8은 useful Chat cache block이 think-gap 중간에 evict되고, 이후 같은 대화의 다음 turn에서 다시 필요해지는 시간 구조를 보여준다. 특히 `chat <- longctx`의 `time_until_next_reuse`는 mean `26.13s`, p50 `26.77s`, p95 `42.22s`로 관측되었다. 이는 문제가 cache block이 재사용되지 않는 것이 아니라, 재사용 시점까지 살아남지 못한다는 데 있음을 보여준다.
 
