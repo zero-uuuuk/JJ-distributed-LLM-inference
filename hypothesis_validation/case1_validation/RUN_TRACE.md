@@ -4,7 +4,7 @@
 
 **run_trace.py 실행 방법**
 
-_Single workload · APC ON/OFF · Chat-only · RAG-only · Longctx-only_
+_Single workload · APC ON/OFF · Chat-only · RAG-only · Longctx-only · Agent-only_
 
 </div>
 
@@ -191,7 +191,64 @@ python case1_validation/run_trace.py \
 
 </details>
 
-### 6. 측정값
+### 6. Agent-only 실행
+
+> [!NOTE]
+> Agent-only는 trajectory prompt가 길 수 있으므로 vLLM 서버를 `--max-model-len 12288`로 재시작한 뒤 실행합니다.
+> 기존 Chat/RAG/Longctx Case 1은 `8192` 기준이고, Agent 결과 파일명은 `len12288` 기준으로 관리합니다.
+
+<details>
+<summary>APC ON 서버가 떠 있을 때</summary>
+
+```bash
+cd /home/ubuntu/JJ-distributed-LLM-inference/hypothesis_validation
+source /home/ubuntu/JJ-distributed-LLM-inference/.venv/bin/activate
+
+python case1_validation/run_trace.py \
+  --trace ../workloads/traj/traj_agent_100session_10step.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --workload-tag agent \
+  --scheduler agent-session \
+  --agent-target-rps 5 \
+  --agent-steps-per-session 10 \
+  --agent-tool-gap-mode exponential \
+  --agent-tool-gap-mean 2 \
+  --agent-tool-gap-max 20 \
+  --max-concurrency 32 \
+  --num-prompts 1000 \
+  --slo-ms 10000 \
+  --output case1_validation/raw_results/agent_only_exp2_cap20_apc_on_len12288.jsonl
+```
+
+</details>
+
+<details>
+<summary>APC OFF 서버로 재시작한 뒤</summary>
+
+```bash
+python case1_validation/run_trace.py \
+  --trace ../workloads/traj/traj_agent_100session_10step.jsonl \
+  --api chat \
+  --url http://127.0.0.1:8000/v1/chat/completions \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --workload-tag agent \
+  --scheduler agent-session \
+  --agent-target-rps 5 \
+  --agent-steps-per-session 10 \
+  --agent-tool-gap-mode exponential \
+  --agent-tool-gap-mean 2 \
+  --agent-tool-gap-max 20 \
+  --max-concurrency 32 \
+  --num-prompts 1000 \
+  --slo-ms 10000 \
+  --output case1_validation/raw_results/agent_only_exp2_cap20_apc_off_len12288.jsonl
+```
+
+</details>
+
+### 7. 측정값
 
 결과 해석은 요청별 raw 결과보다 `*_summary.json` 기준으로 보는 것을 권장합니다.
 

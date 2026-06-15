@@ -25,7 +25,7 @@ Mixed workload에서는 scheduling, batching 문제뿐 아니라 prefix cache의
 그렇다면 왜 hot cache가 밀려나는가? 진짜 원인은 점유율이 아니라 **reuse 시간 척도의 불일치(temporal mismatch)에서 오는 LRU의 구조적 결함**이다.
 
 - Chat의 재사용은 **multi-turn 사이 think-time gap**이 크다 (수 초~수십 초). 같은 prefix를 다시 쓰지만, 다시 쓰기까지의 간격이 길다.
-- 그 gap 동안 RAG/Longctx 같은 다른 workload는 신규 block을 계속 생산한다. Chat block은 touch되지 않은 채 LRU tail로 밀려난다.
+- 그 gap 동안 RAG/Longctx/Agent 같은 다른 workload는 신규 block을 계속 생산한다. Chat block은 touch되지 않은 채 LRU tail로 밀려난다.
 - 특히 Longctx처럼 low-reuse 대용량 prompt를 가진 workload는 수천 token 규모의 신규 block을 만들고, 갓 끝난 block은 "방금 쓰인" 것이라 LRU상 MRU 쪽에 위치한다. **LRU는 "최근 생산된 일회용 대용량 block"과 "최근 가치 있는(곧 재사용될) block"을 구분하지 못한다.**
 - 결국 Chat이 다음 turn에 돌아왔을 때, 재사용 가능했던 prefix block은 이미 evict되어 있다.
 
@@ -50,8 +50,10 @@ Mixed workload에서 prefix cache의 이점을 잘 살리지 못하는 주요 �
 
 1. mixed workload에서 prefix cache ON의 이득(APC gain)이 단일 workload만큼 유지되지 않는가?
 2. 그 이득 감소가 scheduling/batching 손해와 분리해서, **cache eviction 자체**로 설명되는가?
-3. 특히 reusable prefix를 가진 workload(Chat)의 hot cache가, recency만 보는 LRU 때문에 다른 workload(RAG/Longctx)에 의해 밀려나는가?
+3. 특히 reusable prefix를 가진 workload(Chat)의 hot cache가, recency만 보는 LRU 때문에 다른 workload(RAG/Longctx/Agent)에 의해 밀려나는가?
 4. QuotaServe가 이 cross-workload eviction을 줄여 prefix cache의 이점을 회복시키는가?
+
+여기서 Agent는 RAG/Longctx와 다른 성격을 가진다. RAG/Longctx는 주로 Chat을 밀어내는 antagonist로 쓰지만, Agent는 multi-step session 안에서 긴 prompt와 tool observation을 계속 만들고 이전 step history도 다시 쓴다. 따라서 Agent를 측정하는 이유는 단순히 새로운 pressure workload를 추가하기 위해서가 아니라, **Chat + Agent가 만났을 때 두 workload의 reusable cache가 서로 밀려나는지** 보기 위해서다.
 
 ---
 
@@ -108,8 +110,10 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 | Chat-only | ON / OFF | Chat baseline 및 single APC gain |
 | RAG-only | ON / OFF | RAG baseline 및 single APC gain |
 | Longctx-only | ON / OFF | Longctx baseline 및 single APC gain |
+| Agent-only | ON / OFF | Agent baseline 및 single APC gain |
 | Chat + RAG mixed | ON / OFF | 현실적 RAG mixed에서의 APC gain |
 | Chat + Longctx mixed | ON / OFF | 강한 대용량 antagonist mixed에서의 APC gain |
+| Chat + Agent mixed | ON / OFF | multi-step Agent mixed에서의 APC gain |
 
 분리 측정:
 
@@ -123,8 +127,9 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 - mixed에서 Chat hit rate가 떨어지는가?
 - mixed에서 Chat TTFT가 증가하는가?
 - mixed에서 Chat SLO attainment가 감소하는가?
-- mixed에서 antagonist(RAG/Longctx)의 TTFT와 SLO attainment는 어떻게 변하는가?
+- mixed에서 antagonist(RAG/Longctx/Agent)의 TTFT와 SLO attainment는 어떻게 변하는가?
 - mixed에서 RAG보다 cache pressure가 큰 Longctx가 Chat hot cache를 더 많이 직접 evict하는가? 특히 `chat <- longctx` useful eviction이 `chat <- rag`보다 크게 관측되어, antagonist pressure 증가가 Chat hit rate 감소의 cache-level 원인으로 연결되는가?
+- Agent mixed에서 `agent <- chat` 또는 `agent <- agent` useful eviction도 관측되어, Agent 쪽 reusable cache 역시 밀려나는가?
 
 ### Case 2. Cache policy 비교
 
@@ -153,7 +158,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 
 | Case | 비교 기준 |
 |---|---|
-| Case 1 | `Chat-only`, `RAG-only`, `Longctx-only` 대비 `Chat + RAG mixed`, `Chat + Longctx mixed` (각각 APC ON/OFF) |
+| Case 1 | `Chat-only`, `RAG-only`, `Longctx-only`, `Agent-only` 대비 `Chat + RAG mixed`, `Chat + Longctx mixed`, `Chat + Agent mixed` (각각 APC ON/OFF) |
 | Case 2 | 같은 mixed 조건에서 `LRU` vs `reuse-aware eviction` vs `QuotaServe` (APC ON) |
 
 핵심 지표는 세 묶음이다.
@@ -166,7 +171,7 @@ QuotaServe의 구체 메커니즘은 아직 정하지 않았다. 다만 다음 �
 
 ### 6.1 Eviction attribution 계측 (구현됨)
 
-vLLM 내부에 eviction attribution 계측을 추가했다. 어떤 workload가 어떤 workload의 cache block을 evict했는지 직접 기록한다. 따라서 RAG/Longctx 비율이나 prompt length를 높였을 때 Chat hit rate가 감소하는지만 보는 것이 아니라, **실제로 antagonist 요청이 Chat cache block을 evict했는지**(상관이 아닌 인과)도 함께 측정한다.
+vLLM 내부에 eviction attribution 계측을 추가했다. 어떤 workload가 어떤 workload의 cache block을 evict했는지 직접 기록한다. 따라서 RAG/Longctx 비율, Agent session load, prompt length를 높였을 때 Chat hit rate가 감소하는지만 보는 것이 아니라, **실제로 antagonist 요청이 Chat cache block을 evict했는지**(상관이 아닌 인과)도 함께 측정한다.
 
 `useful eviction` 측정은 **shadow cache** 방식으로 구현했다. evict된 block의 hash를 따로 보관해 두고, 이후 요청이 그 block을 다시 요구했는지(즉 evict하지 않았다면 hit이었을지)를 매칭한다. 이로써 "쫓아내도 됐던 block"과 "쫓아내서 손해 본 hot block"을 구분한다.
 
@@ -194,6 +199,7 @@ prefix cache는 1차적으로 prefill/TTFT에 영향을 준다. 다만 TPOT도 �
 - **Chat**: multi-turn conversation으로, turn 사이 think-time gap을 포함한다(이 gap이 2절의 LRU aging out을 일으키는 핵심 변수다). ShareGPT류의 실제 대화 trace를 기반으로 한다.
 - **RAG**: 공유 corpus에서 문서를 끌어오는 현실적 RAG baseline이다. MS MARCO trace의 token 분석상 Chat보다 약간 긴 수준이므로, prefill-heavy workload로 유지하되 long-context 압력을 대표한다고 보지는 않는다.
 - **Longctx**: HotpotQA distractor 기반 multi-hop QA로, 요청마다 3k 내외의 low-reuse multi-doc prompt를 넣는다. RAG보다 강한 antagonist로 사용해 Chat hot cache eviction 메커니즘을 자극한다.
+- **Agent**: Terminal-Bench trajectory 기반 multi-step agent session이다. Step 순서와 tool execution gap을 보존해, 긴 prompt pressure와 session 내부 prefix reuse를 함께 만든다.
 
 ---
 
