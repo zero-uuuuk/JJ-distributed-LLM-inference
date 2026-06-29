@@ -1,202 +1,304 @@
-# QuotaServe 제어 루프 — PFF식 원형
+# QuotaServe 제어 루프 — Cross-workload Useful Eviction Ratio with PFF
 
 ## 한 줄 요약
 
-> 적정 cache량을 미리 계산하지 않는다.
-> 대신 두 가지 증상을 본다. **쫓겨난 block이 나중에 다시 필요했는가**라는 피해 신호와, **쌓아 둔 block이 거의 다시 쓰이지 않는가**라는 낭비 신호다.
-> 이 신호를 보고 workload별 cached-prefix quota를 천천히 조정하되, 두 기준선 사이에서는 아무것도 건드리지 않는다.
+> QuotaServe는 workload별 cached-prefix quota를 런타임에 조정한다.
+> 중심 신호는 **다른 workload에게 쫓겨난 block이 나중에 다시 필요했는가**이다.
+> 사전 profile은 `ratio_low/high` 기준선과 그에 대응되는 `floor/cap`을 정하고, 런타임 quota는 그 사이에서 천천히 움직인다.
+
+> [!IMPORTANT]
+> 핵심은 단순하다. **cross-workload useful eviction ratio가 높으면 quota를 늘리고, 낮으면 줄이며, 그 움직임을 profile curve에서 얻은 `floor`와 `cap` 사이에 둔다.**
 
 ---
 
 ## 용어
 
-본문에서 반복적으로 쓰는 용어를 먼저 정리한다. 이후 설명은 이 정의를 전제로 한다.
-
 | 용어 | 뜻 |
 |---|---|
-| **cached prefix block** | running 요청이 끝나 `ref=0`이 된 prefix block. eviction 후보가 되는, QuotaServe가 다루는 대상이다. |
-| **quota** | workload별로 cached prefix block을 얼마나 보호하거나 쌓을 수 있는지를 정하는 할당량. floor와 cap 두 형태를 가진다(§4). |
-| **floor** | 보호 하한. "이 workload의 cached prefix block을 최소 이만큼은 보호한다." |
-| **cap** | 누적 상한. "이 workload의 cached prefix block은 이 이상 쌓지 않는다." |
-| **피해 신호** | useful-eviction-suffered rate. 쫓겨난 block이 나중에 다시 필요해진 비율(§3.1). |
-| **낭비 신호** | low-reuse / self-churn rate. 재사용이 낮거나 자기 block끼리 밀어내는 비율(§3.2). |
-| **shadow cache** | 쫓겨난 block의 hash를 기록해 두는 그림자 cache. 나중에 같은 block이 다시 필요해지는지를 추적한다. |
-| **eviction attribution** | 누가 누구의 block을 쫓아냈는지 기록하는 장치. |
+| **cached prefix block** | running 요청이 끝나 `ref=0`이 된 prefix block. QuotaServe가 보호하거나 회수할 수 있는 대상이다. |
+| **quota** | workload `w`가 보호받는 cached prefix block 목표량. 런타임에서 조정되는 값이다. (단위: block 수) |
+| **ratio_high** | quota 부족을 판단하는 useful eviction ratio 상한. 이 값보다 높으면 quota를 늘린다. (단위: 0~1 비율) |
+| **ratio_low** | quota 여유를 판단하는 useful eviction ratio 하한. 이 값보다 낮으면 quota를 줄인다. (단위: 0~1 비율) |
+| **floor** | profile curve에서 `ratio_high`에 대응되는 workload별 quota 하한. (단위: block 수) |
+| **cap** | profile curve에서 `ratio_low`에 대응되는 workload별 quota 상한. (단위: block 수) |
+| **eviction attribution** | evictor workload와 victim workload를 함께 기록하는 장치. |
+| **shadow cache** | evict된 block의 hash를 보관해, 이후 같은 block이 다시 요청되는지 추적하는 그림자 cache. |
+| **cross-workload eviction** | `evictor != victim`인 eviction 사건. |
+| **cross-workload useful eviction** | cross-workload eviction 이후 victim workload가 같은 block을 다시 요청한 사건. |
+| **useful eviction ratio** | workload `w`가 겪은 cross-workload eviction 중 useful eviction으로 확인된 비율. |
+| **self eviction** | `evictor == victim`인 eviction 사건. workload 내부 pressure를 보여 주는 보조 관측값이다. |
 | **tick** | 제어 루프가 한 번 도는 주기. |
-| **window** | 신호를 집계하는 관측 구간. |
-| **upper / lower** | 신호를 판정하는 위쪽 / 아래쪽 기준선. 둘 사이는 유지 구간이다. |
+| **window** | workload별 신호를 집계하는 최근 `window_size`개의 cross-workload eviction 사건 묶음. |
+| **window_size** | `useful_eviction_ratio_w`를 계산할 때 분모가 되는 cross-workload eviction 사건 수. |
 
 ---
 
-## 1. 원형 — 운영체제의 PFF
+## 1. PFF식 발상
 
-QuotaServe의 골격은 운영체제의 PFF(Page-Fault Frequency)에서 가져왔다. 먼저 그 발상을 본다.
+운영체제의 PFF(Page-Fault Frequency)는 프로세스의 적정 frame 수를 직접 계산하지 않고, 관측 가능한 fault rate로 working set 부족을 추정한다.
 
-프로세스마다 memory frame을 얼마씩 줘야 할지 정확히 푸는 것은 어렵다. PFF는 그 계산을 직접 풀지 않고 **관측 가능한 증상**을 대신 본다.
-
-- fault가 너무 잦다 → working set을 담기 부족하다 → frame을 더 준다.
-- fault가 너무 드물다 → 할당량이 남는다 → frame을 회수한다.
-
-핵심은 두 가지다.
-
-1. 적정량을 사전에 계산하지 않고, 값싼 feedback signal로 대신한다.
-2. 기준선을 위/아래 둘로 둬서, 그 사이에서는 아무것도 하지 않는다.
-
-두 번째 원칙이 특히 중요하다. 단일 기준선만 두면 signal이 기준선 근처에서 흔들릴 때 quota도 따라 흔들린다. 반면 upper/lower 두 기준선을 두면 signal이 그 사이에 있는 동안 quota를 그대로 유지하므로, 작은 측정 흔들림에 반응하지 않는다.
-
----
-
-## 2. QuotaServe로 옮기기
-
-QuotaServe도 같은 골격을 따른다. 다만 page fault 대신, prefix cache에서 직접 관측되는 두 종류의 증상을 본다.
+QuotaServe도 같은 방식으로 접근한다. 다만 page fault 대신 prefix cache에서 관측되는 **cross-workload useful eviction ratio**를 본다.
 
 | 구분 | OS의 PFF | QuotaServe |
 |---|---|---|
-| 조절 대상 | 프로세스별 frame 수 | workload별 cached prefix block quota |
-| 부족 신호 | page fault rate | 피해 신호 (useful-eviction-suffered rate) |
-| 낭비 신호 | 매우 낮은 fault rate | 낭비 신호 (low-reuse / self-churn rate) |
-| 신호 출처 | fault 카운터 | eviction attribution + shadow cache |
-| 너무 부족할 때 | frame 증가 | floor 증가 |
-| 너무 남을 때 | frame 회수 | cap 감소 또는 floor 감소 |
-| 진동 방지 | upper/lower bound | 기준선 사이 유지 구간 + tick당 변화량 제한 |
+| 조절 대상 | 프로세스별 frame 수 | workload별 cached-prefix quota |
+| 관측 신호 | page fault rate | cross-workload useful eviction ratio |
+| 신호가 높을 때 | frame 부족 | 다른 workload에게 hot prefix가 밀림 |
+| 런타임 조정값 | frame 할당량 | `quota_w` |
+| 사전 산정값 | fault-rate 기준선과 frame 범위 | `ratio_low/high`, `floor_w`, `cap_w` |
 
-> [!NOTE]
-> 여기서 한 가지를 분명히 해 둔다. **QuotaServe의 quota는 전체 KV block pool에 대한 throttle이 아니다.** running 요청이 지금 쓰고 있는 KV block은 건드리지 않고, 요청이 끝나 `ref=0`이 되어 eviction 후보가 된 cached prefix block에만 적용한다.
->
-> 즉 목적은 in-flight 요청을 막는 것이 아니다. 이미 evictable해진 cache block 중에서 **어떤 workload의 hot prefix를 더 오래 보호할지**를 정하는 것이다.
+![PFF 기준선 개념](pff_graph.png)
+
+*그림 1. PFF는 page-fault rate가 상한보다 높으면 frame을 늘리고, 하한보다 낮으면 frame을 줄인다.*
+
+![QuotaServe 기준선 개념](quotaserve_graph.png)
+
+*그림 2. QuotaServe는 useful eviction ratio가 `ratio_high`보다 높으면 quota를 늘리고, `ratio_low`보다 낮으면 quota를 줄인다.*
+
+여기서 `ratio_low/high`는 useful eviction ratio의 기준선이고, `floor/cap`은 그 기준선에 대응되는 workload별 quota 범위다.
+
+```text
+floor_w <= quota_w <= cap_w
+```
+
+---
+
+## 2. 대상 범위
+
+QuotaServe는 전체 KV block pool을 직접 throttle하는 정책이 아니다. 대상은 요청이 끝나 `ref=0`이 된 cached prefix block이다.
+
+즉 running 요청의 prefill/decode KV block은 실행 경로 그대로 두고, evictable cache block 중 어떤 workload의 prefix를 더 오래 보호할지 결정한다.
 
 ---
 
 ## 3. 신호 정의
 
-QuotaServe는 PFF처럼 단순한 feedback loop를 지향하지만, 한 신호에 모든 의미를 억지로 욱여넣지는 않는다. 피해와 낭비, 최소한 이 둘은 구분한다.
+### 3.1 Cross-workload useful eviction ratio
 
-> [!IMPORTANT]
-> 두 신호는 일부 workload에만 붙는 것이 아니다. **모든 workload가 자신의 피해 신호와 낭비 신호를 동시에 가진다.** Chat / RAG(Longctx) 구분은 어느 신호를 측정하느냐가 아니라, 어느 신호가 주로 기준선을 넘느냐의 차이일 뿐이다.
+workload `w`의 중심 신호는 `w`가 다른 workload에게 eviction 당한 뒤, 같은 block을 나중에 다시 필요로 한 비율이다.
 
-### 3.1 피해 신호 — useful-eviction-suffered rate
+집계 사건은 다음과 같다.
 
-피해 신호는 workload `w`가 겪은 eviction 중 **나중에 다시 필요해진 정도**이다. `w`를 **피해자(victim)** 로 보고, 다음 사건을 workload별로 집계한다.
+1. workload `x`가 workload `w`의 cached prefix block을 evict한다.
+2. 이때 `x != w`이다.
+3. evict된 block의 hash를 shadow cache에 기록한다.
+4. 이후 workload `w`가 같은 block을 다시 요청한다.
+5. shadow cache hit가 발생하면 cross-workload useful eviction으로 집계한다.
 
-1. workload `w`의 cached prefix block이 evict된다.
-2. 해당 block의 hash를 shadow cache에 기록한다.
-3. 이후 `w`의 요청이 같은 block을 다시 필요로 한다.
-4. 이때 shadow cache hit가 발생하면, 그 eviction을 `w` 입장의 useful eviction suffered로 집계한다.
+수식은 다음과 같다.
 
-이 값이 높다는 것은, 그 block이 evict되지 않았다면 cache hit으로 이어졌을 가능성이 높았다는 뜻이다. 곧 LRU가 아직 쓸모 있는 block을 너무 일찍 내보내고 있다는 신호다. 따라서 **피해 신호가 높은 workload는 floor를 올려 더 오래 보호한다.** reuse 가치는 크지만 turn 사이 think-time gap 때문에 LRU에서 aging out되기 쉬운 Chat이 대표적인 예다.
+```text
+cross_workload_evictions_w
+= window_size개의 최근 eviction where victim = w and evictor != w
 
-### 3.2 낭비 신호 — low-reuse / self-churn rate
+cross_workload_shadow_hits_w
+= count(shadow hit within the window)
 
-낭비 신호는 workload `w`가 만든 cached block이 공간을 차지하거나 eviction을 일으켰지만, 이후 거의 다시 쓰이지 않는 정도를 나타낸다. 대표적으로 다음을 관측한다.
+useful_eviction_ratio_w
+= cross_workload_shadow_hits_w / window_size
+```
 
-- `w ← w` eviction 중 `reused_later` 비율이 매우 낮다.
-- `w`가 cache에 올린 block 중 이후 다시 hit되는 비율이 낮다.
-- `w`가 block을 많이 생산하지만, shadow cache에서 useful reuse로 돌아오는 경우가 거의 없다.
+![Eviction metric 예시](eviction_metric_example.png)
 
-이 값이 높다는 것은, `w`가 cache에 남겨 둔 block이 hot cache 보호에는 기여하지 않고 eviction pressure만 만든다는 뜻이다. 따라서 **낭비 신호가 높은 workload는 cap을 내려 누적을 억제한다.** 대용량 one-shot prompt를 많이 만들어 self-churn이 큰 Longctx가 대표적인 예다.
+*그림 3. self eviction은 workload 내부 pressure를 설명하는 보조 관측값이고, cross-workload case의 useful eviction ratio가 런타임 quota 조정 기준이 된다.*
+
+해석은 단순하다.
+
+```text
+useful_eviction_ratio_w 높음
+→ w의 hot prefix가 다른 workload에게 밀리고 있음
+→ quota_w를 cap_w 방향으로 올림
+
+useful_eviction_ratio_w 낮음
+→ 추가 보호의 근거가 약함
+→ quota_w를 floor_w 방향으로 내림
+```
+
+비율 기반 신호는 작은 표본에서 쉽게 튄다. 따라서 workload별로 최근 `window_size`개의 cross-workload eviction 사건을 하나의 window로 삼고, 그 안에서 useful eviction으로 확인된 사건 비율을 계산한다.
+
+### 3.2 Self eviction
+
+`evictor == victim`인 self eviction은 workload 내부 cache pressure를 보여 준다.
+
+예를 들어 `Chat ← Chat`은 Chat이 자기 block끼리 경쟁한 사건이고, `Longctx ← Longctx`는 Longctx 내부에서 대량 prefix가 서로 밀어낸 사건이다. 이 값은 profiling과 분석에서 workload의 working-set 크기, 내부 churn, cache 수요를 이해하는 데 사용한다.
+
+> [!NOTE]
+> self eviction은 workload 내부 pressure를 설명하는 보조 관측값이며, quota 조정의 직접 입력으로 사용하지 않는다. 런타임 quota 조정은 `evictor != victim`인 cross-workload useful eviction ratio를 기준으로 한다.
 
 ---
 
-## 4. 두 종류의 quota
+## 4. Profile curve와 ratio 기준선
 
-피해 신호와 낭비 신호가 가리키는 대응이 다르듯, quota도 workload 성격에 따라 두 가지 형태를 가진다.
+profile 단계에서는 먼저 workload별 quota와 useful eviction ratio의 관계를 얻는다. quota 후보를 sweep하면, quota가 늘어날수록 useful eviction ratio가 낮아지는 profile curve를 관측할 수 있다. (그림 2)
 
-### 4.1 보호 floor
+```text
+quota 후보: 0%, 5%, 10%, 15%, ...
+관측값: cross-workload useful eviction ratio, shadow hit, cache hit, miss
+```
 
-floor는 "이 workload의 cached prefix block을 최소 이만큼은 보호한다"는 뜻으로, **피해 신호에 반응하는 제어 변수**다. multi-turn reuse가 있어 LRU에 쉽게 밀려나는 Chat이 floor의 대표적인 수혜자다.
+그 다음 여러 `ratio_low/high` 후보를 평가한다.
 
-- 피해 신호가 upper를 넘으면 floor를 올린다.
-- 피해 신호가 lower보다 충분히 낮고 실제 사용량도 낮으면 floor를 천천히 내린다.
-- 한 대화의 reusable prefix조차 담지 못할 만큼 작아지지 않도록 floor에 하한을 둔다.
+```text
+ratio 후보: (low=0.05, high=0.20), (low=0.10, high=0.30), ...
+평가값: cache hit, recomputation 감소, cross-workload useful eviction 감소, 처리량
+선택값: profile 결과가 가장 좋은 ratio_low/high
+```
 
-### 4.2 제한 cap
+### 4.1 ratio_high와 floor
 
-cap은 "이 workload의 cached prefix block은 이 이상 쌓지 않는다"는 뜻으로, **낭비 신호에 반응하는 제어 변수**다. self-churn이 높고 `reused_later` 비율이 낮은 RAG, Longctx가 cap의 대표적인 대상이다.
+`ratio_high`는 quota 부족을 판단하는 useful eviction ratio 상한이다. profile curve에서 `ratio_high`에 대응되는 quota를 workload `w`의 `floor_w`로 둔다.
 
-- 낭비 신호가 upper를 넘으면 cap을 내린다.
-- 낭비 신호가 lower보다 낮고, 해당 workload에서도 유의미한 hit가 관측되면 cap을 천천히 올린다.
-- cap은 running KV를 제한하지 않으므로, 실행 중인 요청의 prefill/decode를 직접 throttle하지 않는다.
+직관적으로는 `useful_eviction_ratio_w`가 이 값보다 높을 때 workload `w`의 cached prefix가 다른 workload에게 자주 밀린다는 뜻이다.
+
+### 4.2 ratio_low와 cap
+
+`ratio_low`는 quota 여유를 판단하는 useful eviction ratio 하한이다. profile curve에서 `ratio_low`에 대응되는 quota를 workload `w`의 `cap_w`로 둔다.
+
+직관적으로는 `useful_eviction_ratio_w`가 이 값보다 낮을 때 workload `w`의 quota를 줄여도 cross-workload useful eviction 증가가 작다는 뜻이다.
+
+### 4.3 profile 결과
+
+profile 단계의 결과는 ratio 기준선과 workload별 quota 범위다.
+
+```text
+ratio_low <= useful_eviction_ratio_w <= ratio_high
+
+Chat:    floor_chat    <= quota_chat    <= cap_chat
+RAG:     floor_rag     <= quota_rag     <= cap_rag
+Longctx: floor_longctx <= quota_longctx <= cap_longctx
+Agent:   floor_agent   <= quota_agent   <= cap_agent
+```
+
+이 범위는 실험 설정, cache 크기, workload mix가 바뀌면 다시 profile한다.
 
 ---
 
-## 5. 한 사이클
+## 5. 런타임 quota 조정
 
-매 tick(예: 10-30s)마다 다음 순서로 제어 루프를 돈다.
+매 tick마다 최근 window의 cross-workload useful eviction ratio를 계산하고, `ratio_low/high`와 비교한다.
+
+```text
+useful_eviction_ratio_w > ratio_high
+→ candidate_quota_w = quota_w(now) + step
+
+useful_eviction_ratio_w < ratio_low
+→ candidate_quota_w = quota_w(now) - step
+
+ratio_low <= useful_eviction_ratio_w <= ratio_high
+→ candidate_quota_w = quota_w(now)
+```
+
+그 다음 quota 범위를 적용한다.
+
+```text
+quota_w(next)
+= clamp(candidate_quota_w, floor_w, cap_w)
+```
+
+예를 들어 `step=30`이고 현재 `quota_w=250`일 때:
+
+```text
+ratio > ratio_high → quota_w(next) = 280
+ratio < ratio_low  → quota_w(next) = 220
+ratio가 기준선 안 → quota_w(next) = 250
+```
+
+마지막 clamp는 quota가 profile curve에서 얻은 범위 밖으로 나가지 않게 한다.
+
+```text
+floor_w <= quota_w <= cap_w
+```
+
+> [!NOTE]
+> 전체 quota 합이 evictable cache pool을 넘는 경우에는 `floor`를 먼저 보장하고, 남은 공간을 ratio가 큰 workload에 우선 배분한다.
+
+---
+
+## 6. 한 사이클
 
 ```text
 1. 집계
-   지난 window(예: 2-5분) 동안 workload별 eviction attribution, shadow cache hit,
-   hit rate, cached-block occupancy를 모은다.
+   지난 window 동안 workload별 eviction attribution과 shadow cache hit를 모은다.
 
-2. 신호 계산
-   피해 신호 = useful-eviction-suffered rate
-   낭비 신호 = low-reuse / self-churn rate
+2. cross-workload 사건 선택
+   victim = w, evictor != w인 eviction만 useful eviction ratio 계산에 사용한다.
 
-3. 비교
-   각 신호를 workload별 upper/lower 기준선과 비교한다.
+3. window 구성
+   workload별 최근 window_size개의 cross-workload eviction 사건을
+   useful_eviction_ratio_w 계산 window로 사용한다.
 
-4. 조정
-   피해 신호 > upper   → floor 증가
-   피해 신호 < lower   → floor 감소 후보
-   낭비 신호 > upper   → cap 감소
-   낭비 신호 < lower   → cap 증가 후보
-   upper/lower 사이    → 변경 없음
+4. 신호 계산
+   useful_eviction_ratio_w =
+   cross_workload_shadow_hits_w / window_size
 
-5. 변화량 제한
-   한 tick에서 floor/cap이 움직일 수 있는 최대 block 수(예: 15 blocks) 를 제한한다.
+5. 기준선 비교
+   useful_eviction_ratio_w > ratio_high 이면 quota_w를 증가시킨다.
+   useful_eviction_ratio_w < ratio_low 이면 quota_w를 감소시킨다.
+   ratio_low <= useful_eviction_ratio_w <= ratio_high 이면 quota_w를 유지한다.
 
-6. 정규화
-   floor 합과 cap 제약이 전체 evictable cache pool 안에서
-   동시에 만족되도록 맞춘다.
+6. 변화량 제한
+   tick당 최대 이동량 step 안에서 quota_w를 이동시킨다.
 
-7. 운영
-   다음 window 동안 새 quota로 eviction policy를 적용하고, 다시 반복한다.
+7. 범위 적용
+   floor_w <= quota_w <= cap_w를 만족시킨다.
+
+8. eviction policy 적용
+   다음 window 동안 quota를 기준으로 cached prefix block을 보호한다.
 ```
 
 ---
 
-## 6. 정규화와 양보 규칙
+## 7. Eviction policy 적용
 
-floor 합이 전체 evictable cache pool을 넘거나, 한 workload의 floor 증가가 다른 workload의 공간을 줄여야 하는 상황이 생길 수 있다. 이때 QuotaServe는 quota를 임의로 깎지 않고, 다음 우선순위로 양보 대상을 고른다.
+evictable cached prefix block이 부족해지면, 각 workload의 현재 occupancy와 quota를 비교한다.
 
-1. 피해 신호가 lower보다 낮은 workload
-2. 낭비 신호가 높은 workload
-3. 현재 occupancy가 자기 floor보다 충분히 큰 workload
-4. 최근 window에서 hit rate가 낮은 workload
+```text
+occupancy_w > quota_w
+→ w는 자기 quota보다 많이 쌓은 상태
+→ w의 evictable block을 우선 후보로 둠
 
-요컨대 먼저 회수되는 쪽은 "쫓겨나도 다시 필요해진 증거가 약하고, 많이 쌓지만 재사용은 적은" workload다. 반대로 useful eviction 피해가 계속 관측되는 workload의 floor는 마지막까지 보호한다.
+occupancy_w <= quota_w
+→ w는 quota 안에 있음
+→ 다른 초과 workload보다 늦게 후보가 됨
+```
 
-정규화도 급격하게 하지 않는다. 필요한 회수량이 크더라도 tick당 변화량 제한을 거치며, 여러 tick에 걸쳐 천천히 수렴한다.
+![Eviction policy 예시](eviction_policy_diagram.png)
+
+예시는 다음과 같다.
+
+```text
+Chat quota = 300, Chat occupancy = 250
+→ Chat은 quota 안에 있으므로 보호 우선순위가 높다.
+
+Longctx quota = 100, Longctx occupancy = 180
+→ Longctx는 quota를 초과했으므로 eviction 우선 후보가 된다.
+```
+
+> [!NOTE]
+> QuotaServe는 `occupancy_w > quota_w`인 workload를 우선하고, 선택된 workload 안에서는 기존 LRU로 cached prefix block을 evict한다.
 
 ---
 
-## 7. 지연 관측과 안정성
+## 8. 지연 관측과 안정성
 
-shadow cache 기반 useful eviction은 eviction 순간에 곧장 확정되지 않는다. block이 evict된 뒤 **나중에** 같은 block이 다시 필요해져야 비로소 useful eviction으로 확인된다.
-
-Chat의 경우 다음 turn까지의 think-time gap이 수 초에서 수십 초에 이를 수 있다. 따라서 tick이 너무 짧거나 window가 너무 작으면, 피해가 아직 관측되기도 전에 quota를 잘못 움직일 수 있다.
+shadow cache 기반 useful eviction은 eviction 이후의 재요청으로 확정된다. block이 evict된 뒤 나중에 같은 block이 다시 필요해지는 순간 useful eviction으로 확인된다.
 
 이 지연을 견디기 위해 다음 장치를 둔다.
 
-- **upper/lower 두 기준선**: signal이 두 기준선 사이에 있으면 quota를 바꾸지 않는다.
-- **window 또는 EWMA**: 순간값이 아니라 최근 구간의 완만한 signal을 쓴다.
-- **reuse-delay 고려**: useful eviction이 늦게 확정된다는 점을 window 길이와 해석에 반영한다.
-- **tick당 변화량 제한**: quota를 한 번에 크게 바꾸지 않는다.
-- **floor 하한**: floor가 한 대화의 reusable prefix조차 담지 못할 만큼 작아지지 않게 한다.
-- **cap 하한**: cap이 0으로 내려가 cache를 완전히 금지하는 일이 없게 한다. 최소 공간이 남아 있어야 그 workload의 hit를 다시 관측하고 cap을 회복할 수 있다.
+- **event-count window**: workload별 최근 `window_size`개의 cross-workload eviction 사건으로 `useful_eviction_ratio_w`를 계산한다.
+- **tick당 변화량 제한**: quota가 한 번에 크게 움직이는 것을 막는다.
+- **ratio_low/high 기준선**: useful eviction ratio가 기준선 밖으로 벗어날 때 quota를 움직인다.
+- **profile 기반 floor/cap**: quota가 profile curve에서 얻은 범위 안에서 움직인다.
+- **reuse-delay 고려**: Chat처럼 turn 사이 think-time gap이 있는 workload는 window를 충분히 길게 둔다.
 
 ---
 
-## 8. 이 문서의 범위
+## 9. 이 문서의 범위
 
-이 문서는 QuotaServe 제어 루프의 **원형**을 정의한다. 다음 값들은 구현과 실험 과정에서 맞춰 갈 조정 파라미터로 남긴다.
+이 문서는 QuotaServe 제어 루프의 원형을 정의한다. 다음 값들은 구현과 실험 과정에서 맞춰 갈 파라미터다.
 
-- tick (제어 주기)
-- window 길이 또는 EWMA 계수
-- 피해 신호의 upper / lower
-- 낭비 신호의 upper / lower
-- floor/cap의 tick당 변화량 상한
-- floor/cap의 절대 하한과 상한
-
-> [!TIP]
-> 핵심은 수치를 미리 맞히는 것이 아니다. **evictable cached prefix block에 한정된 feedback loop**로 hot cache 피해는 줄이고 low-reuse cache 낭비는 회수하는 것, 그것이 이 설계의 전부다.
+- tick
+- `window_size`
+- `ratio_low`, `ratio_high`
+- tick당 quota 변화량 `step`
+- 전체 evictable cache pool 안에서 quota를 정규화하는 방식
