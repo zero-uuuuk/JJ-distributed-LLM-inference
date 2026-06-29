@@ -37,7 +37,7 @@ from run_trace import (
 DEFAULT_CHAT_SLO_MS = 400.0
 DEFAULT_RAG_SLO_MS = 400.0
 DEFAULT_LONGCTX_SLO_MS = 7700.0
-DEFAULT_AGENT_SLO_MS = 10000.0
+DEFAULT_AGENT_SLO_MS = 200.0
 
 CASE1_VALIDATION_DIR = Path(__file__).resolve().parent
 HYPOTHESIS_DIR = CASE1_VALIDATION_DIR.parent
@@ -129,7 +129,7 @@ def resolve_output_path(args: argparse.Namespace, antagonist_tag: str, antagonis
 
     chat_label = format_qps_label(args.chat_qps)
     antagonist_label = format_qps_label(antagonist_rate)
-    model_len_label = "len12288" if antagonist_tag == "agent" else "len8192"
+    model_len_label = "len8192"
     filename = f"mixed_chat{chat_label}_{antagonist_tag}{antagonist_label}_apc_on_{model_len_label}.jsonl"
     return (DEFAULT_OUTPUT_DIR / filename).resolve()
 

@@ -202,18 +202,18 @@ python case1_validation/run_mixed.py \
 <summary>APC ON 서버가 떠 있을 때</summary>
 
 > [!NOTE]
-> Chat + Agent mixed를 계측할 때는 APC ON 서버를 Agent용 model length와 eviction log 경로로 재시작합니다.
+> Chat + Agent mixed를 계측할 때는 APC ON 서버를 공통 model length와 Agent용 eviction log 경로로 재시작합니다.
 
 ```bash
 cd /home/ubuntu/vllm
 source /home/ubuntu/vllm/.venv/bin/activate
 
 VLLM_SERVER_DEV_MODE=1 \
-VLLM_EVICTION_LOG=/home/ubuntu/vllm/eviction_logs/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl \
+VLLM_EVICTION_LOG=/home/ubuntu/vllm/eviction_logs/chat_traj_agent_exp2_cap20_apc_on_len8192.jsonl \
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
-  --max-model-len 12288 \
+  --max-model-len 8192 \
   --max-num-seqs 32 \
   --gpu-memory-utilization 0.6 \
   --port 8000
@@ -238,13 +238,13 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
-  --agent-slo-ms 10000 \
-  --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl
+  --agent-slo-ms 200 \
+  --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len8192.jsonl
 ```
 
 ```bash
 curl -X POST http://127.0.0.1:8000/flush_eviction_log
-grep '"reused_later": false' /home/ubuntu/vllm/eviction_logs/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl | head
+grep '"reused_later": false' /home/ubuntu/vllm/eviction_logs/chat_traj_agent_exp2_cap20_apc_on_len8192.jsonl | head
 ```
 
 </details>
@@ -268,8 +268,8 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
-  --agent-slo-ms 10000 \
-  --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_off_len12288.jsonl
+  --agent-slo-ms 200 \
+  --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_off_len8192.jsonl
 ```
 
 </details>
