@@ -238,7 +238,7 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
-  --agent-slo-ms 10000 \
+  --agent-slo-ms 200 \
   --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len8192.jsonl
 ```
 
@@ -268,7 +268,7 @@ python case1_validation/run_mixed.py \
   --num-chat-prompts 1000 \
   --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
-  --agent-slo-ms 10000 \
+  --agent-slo-ms 200 \
   --output case1_validation/raw_results/chat_traj_agent_exp2_cap20_apc_off_len8192.jsonl
 ```
 

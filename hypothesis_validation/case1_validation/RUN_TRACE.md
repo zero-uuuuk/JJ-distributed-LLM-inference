@@ -214,7 +214,7 @@ python case1_validation/run_trace.py \
   --agent-tool-gap-max 20 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 10000 \
+  --slo-ms 200 \
   --output case1_validation/raw_results/agent_only_exp2_cap20_apc_on_len8192.jsonl
 ```
 
@@ -238,7 +238,7 @@ python case1_validation/run_trace.py \
   --agent-tool-gap-max 20 \
   --max-concurrency 32 \
   --num-prompts 1000 \
-  --slo-ms 10000 \
+  --slo-ms 200 \
   --output case1_validation/raw_results/agent_only_exp2_cap20_apc_off_len8192.jsonl
 ```
 
