@@ -54,7 +54,7 @@ case "$MIX" in
       --num-chat-prompts 1000 \
       --num-agent-prompts 1000 \
       --chat-slo-ms 400 \
-      --agent-slo-ms 10000 \
+      --agent-slo-ms 200 \
       --max-concurrency 32 \
       --url "$URL"
     ;;

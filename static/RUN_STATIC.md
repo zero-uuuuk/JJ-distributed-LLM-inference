@@ -1,6 +1,8 @@
 # RUN_STATIC — QuotaServe static 검증 실험
 
 plan §8.4. victim은 Chat(sharegpt), antagonist는 Longctx(hotpotqa) 또는 Agent(traj).
+static 정책은 고정 `quota_ratio → quota_w`와 strict `occupancy_w > quota_w`
+victim selection을 사용한다.
 
 ```text
 server: static/server_static.sh   <mix> <mode>   # vLLM 서버 (QUOTA_SERVE_MODE)
@@ -15,9 +17,11 @@ QuotaServe static은 **서버측 env(`QUOTA_SERVE_MODE=static`)**로만 켜진�
 
 ## 0. 전제
 
-- vLLM fork에 QuotaServe hook(PR 0) + config(PR 1)가 들어가 있어야 한다.
-  - PR 1 단계에서는 `static`이 아직 서버에서 NotImplementedError를 낼 수 있다
-    (전용 collector는 PR 3+). 그 전까지는 `off`로 parity만 확인한다.
+- vLLM fork에 QuotaServe lifecycle hook, request threading, block metadata,
+  config schema가 들어가 있어야 한다.
+  - request threading과 `KVCacheBlock` metadata 보완까지 들어간 상태를 기준으로 한다.
+  - static collector/victim selection은 PR 3/4 소관이다. 그 전까지는 `off`로
+    parity만 확인한다.
 - workload trace는 JJ repo에 있다. `JJ_ROOT`로 경로를 지정한다.
   - 기본값: `~/JJ-distributed-LLM-inference`
 
@@ -27,6 +31,15 @@ QuotaServe static은 **서버측 env(`QUOTA_SERVE_MODE=static`)**로만 켜진�
 export VLLM_DIR=~/vllm
 export JJ_ROOT=~/JJ-distributed-LLM-inference
 # QUOTA_SERVE_CONFIG 기본 = $VLLM_DIR/vllm/quota_serve/quota_serve.yaml
+```
+
+고정 실행 기준:
+
+```text
+instance              = g5.xlarge
+--max-model-len       = 8192
+request max_tokens    = min(trace output_token_len, 1776)
+--agent-slo-ms        = 200
 ```
 
 ## 2. 실행 — 비교 3종 (각 mix마다)
@@ -54,8 +67,8 @@ export JJ_ROOT=~/JJ-distributed-LLM-inference
 ./server_static.sh agent static  # + ./run_static.sh agent static
 ```
 
-> Agent는 `--max-model-len 12288`로 뜬다. KV-cache 압박이 크면 server_static.sh의
-> `--max-num-seqs`를 16으로 낮춘다.
+> Agent도 longctx와 동일하게 `--max-model-len 8192`로 뜬다(§2 고정값). KV-cache 압박이
+> 크면 server_static.sh의 `--max-num-seqs`를 16으로 낮춘다.
 
 ## 3. 산출물
 
@@ -79,12 +92,14 @@ static/
 - `chat ← longctx` useful eviction ≥20% 감소
 - `chat.hit_rate_mean` 증가
 - `longctx.slo_attainment` ≤5%p 감소
-- `quota_protected_but_evicted` 비율 ≤ 임계(예 10%)
+- `over_quota_selected ratio`가 유의미하게 관측됨
+- `fallback_no_over_quota ratio`가 과도하게 높지 않음
+- counter drift / owner mismatch로 인한 RuntimeError 없음
 
 **Chat + Agent**
 - `chat ← agent` useful eviction ≥20% 감소
 - `chat.hit_rate_mean` 증가
 - `agent.slo_attainment` ≤5%p 감소
 - **agent self-reuse 보존**: `agent ← agent` useful eviction이 baseline 대비 크게
-  악화되지 않음 (cap이 agent의 delayed self-reuse까지 깎으면 실패 신호)
-- agent `cap_ratio`를 sweep하며 "Chat 보호 ↔ agent self-reuse 보존" 지점을 찾는다.
+  악화되지 않음
+- agent/chat `quota_ratio`를 sweep하며 "Chat 보호 ↔ agent self-reuse 보존" 지점을 찾는다.

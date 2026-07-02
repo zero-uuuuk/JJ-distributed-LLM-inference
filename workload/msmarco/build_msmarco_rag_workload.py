@@ -29,7 +29,7 @@ from typing import Any
 DEFAULT_DATASET_NAME = "microsoft/ms_marco"
 DEFAULT_SUBSET = "v2.1"
 DEFAULT_SPLIT = "validation"
-# run_mixed.py의 DEFAULT_MODEL과 일치시켜 output_token_len이 실제 서빙 토큰 수와 맞도록 한다.
+# static runner의 DEFAULT_MODEL과 일치시켜 output_token_len이 실제 서빙 토큰 수와 맞도록 한다.
 DEFAULT_TOKENIZER = "meta-llama/Llama-3.2-3B-Instruct"
 # MS MARCO에서 답이 없는 row를 표시하는 문자열. 이런 row는 trace에서 제외한다.
 NO_ANSWER_MARKER = "No Answer Present."
@@ -46,7 +46,7 @@ Keep the answer concise."""
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    """dict 리스트를 run_trace.py / run_mixed.py용 JSONL 파일로 저장한다."""
+    """dict 리스트를 static runner용 JSONL 파일로 저장한다."""
     resolved_path = path.expanduser().resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -114,7 +114,7 @@ def parse_args() -> argparse.Namespace:
         "--tokenizer",
         default=DEFAULT_TOKENIZER,
         help=(
-            "output_token_len 계산용 tokenizer입니다. run_mixed의 모델과 일치시킵니다. "
+            "output_token_len 계산용 tokenizer입니다. static runner의 모델과 일치시킵니다. "
             "gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요."
         ),
     )
@@ -270,13 +270,13 @@ def build_output_item(
 ) -> dict[str, Any]:
     """MS MARCO RAG JSONL row와 분석용 메타데이터를 만든다."""
     return {
-        # run_trace.py / run_mixed.py가 식별할 요청 ID와 OpenAI-compatible 입력.
+        # static runner가 식별할 요청 ID와 OpenAI-compatible 입력.
         "request_id": f"msmarco-rag-{emitted_index:06d}",
         "msmarco_query_id": row.get("query_id"),
         "messages": [{"role": "user", "content": prompt}],
         "prompt": prompt,
         "output_text": answer,
-        # output_token_len은 run_mixed가 max_tokens로 소비해 RAG의 짧은 decode를 현실화한다.
+        # output_token_len은 static runner가 max_tokens로 소비해 RAG의 짧은 decode를 현실화한다.
         "output_token_len": output_token_len,
         # 분석과 sanity check를 위한 workload metadata.
         "source_dataset": "MS MARCO",

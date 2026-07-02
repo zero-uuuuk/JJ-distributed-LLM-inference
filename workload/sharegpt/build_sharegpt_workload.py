@@ -21,7 +21,7 @@ from typing import Any
 
 DEFAULT_REPO_ID = "anon8231489123/ShareGPT_Vicuna_unfiltered"
 DEFAULT_FILENAME = "ShareGPT_V3_unfiltered_cleaned_split.json"
-# run_mixed.py의 DEFAULT_MODEL과 일치시켜 output_token_len이 실제 서빙 토큰 수와 맞도록 한다.
+# static runner의 DEFAULT_MODEL과 일치시켜 output_token_len이 실제 서빙 토큰 수와 맞도록 한다.
 DEFAULT_TOKENIZER = "meta-llama/Llama-3.2-3B-Instruct"
 
 
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
         "--tokenizer",
         default=DEFAULT_TOKENIZER,
         help=(
-            "output_token_len 계산에 쓸 tokenizer입니다. run_mixed의 모델과 일치시킵니다. "
+            "output_token_len 계산에 쓸 tokenizer입니다. static runner의 모델과 일치시킵니다. "
             "gated 모델이라 접근 권한이 없으면 비-gated tokenizer로 바꿔 지정하세요."
         ),
     )
@@ -228,7 +228,7 @@ def build_requests(
         ]
 
         # 원본 assistant 응답은 후처리 분석에서 참조할 label로 보존한다.
-        # output_token_len은 run_mixed가 max_tokens로 소비해 decode 길이를 현실화한다.
+        # output_token_len은 static runner가 max_tokens로 소비해 decode 길이를 현실화한다.
         requests.append(
             {
                 "request_id": f"{conversation_id}_turn_{turn_index}",

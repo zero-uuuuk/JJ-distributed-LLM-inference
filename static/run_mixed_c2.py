@@ -20,6 +20,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -35,11 +36,7 @@ DEFAULT_RAG_SLO_MS = 400.0
 DEFAULT_LONGCTX_SLO_MS = 7700.0
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
-DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
-    "chat": 691,
-    "rag": 205,
-    "longctx": 41,
-}
+DEFAULT_MAX_OUTPUT_TOKENS = 1776
 
 # static/run_mixed_c2.py 위치 기준. 출력은 static/ 아래에 둔다.
 STATIC_DIR = Path(__file__).resolve().parent
@@ -261,22 +258,13 @@ def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_max_token_cap(workload_tag: str) -> int | None:
-    """workload별 trace 최대 output length를 기본 cap으로 사용한다."""
-    return DEFAULT_MAX_TOKENS_BY_WORKLOAD.get(workload_tag.lower())
-
-
 def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
-    """요청별 output_token_len을 보존하되 workload별 최대값으로 truncation을 방지한다."""
+    """요청별 output_token_len을 보존하되 전역 생성 상한 1776을 넘기지 않는다."""
     row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
-    token_cap = resolve_max_token_cap(workload_tag)
+    token_cap = DEFAULT_MAX_OUTPUT_TOKENS
 
-    if row_max_tokens is None and token_cap is None:
-        return DEFAULT_FALLBACK_MAX_TOKENS
     if row_max_tokens is None:
-        return int(token_cap)
-    if token_cap is None:
-        return int(row_max_tokens)
+        return DEFAULT_FALLBACK_MAX_TOKENS
     return int(min(row_max_tokens, token_cap))
 
 
@@ -347,7 +335,11 @@ async def send_one(
         try:
             # SSE 스트리밍 응답. stream=True + include_usage라서 토큰이 하나씩
             # "data: {...}" 라인으로 오고, 마지막에 usage(캐시 hit 포함) 청크가 온다.
-            async with session.post(url, json=payload) as response:
+            # QuotaServe PR 2: workload 태그를 X-Request-Id로 실어 보낸다. vLLM은
+            # 이 헤더를 request_id로 반영(chatcmpl-<태그>-<uuid>)하고, 서버측
+            # collector가 request_id에서 workload를 추론해 block owner로 쓴다.
+            headers = {"X-Request-Id": f"{workload_tag}-{uuid.uuid4().hex}"}
+            async with session.post(url, json=payload, headers=headers) as response:
                 if response.status != 200:
                     # 비정상 응답은 본문 앞 200자만 잘라 에러로 기록(로그 폭주 방지).
                     error = f"http {response.status}: {(await response.text())[:200]}"

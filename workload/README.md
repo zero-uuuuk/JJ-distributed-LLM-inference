@@ -40,7 +40,7 @@ agent(§8.4.2)를 쓴다. rag(msmarco)는 config(§5.1)에 quota가 정의된 �
 - `msmarco`, `traj`, `hotpotqa`: `datasets` (`pip install datasets`)
 - gated 데이터셋이면 `huggingface-cli login` 필요
 
-## 생성 명령 (plan §1 / RUN_MIXED 기준)
+## 생성 명령 (plan §1 / static runner 기준)
 
 `--output`은 모든 builder에서 필수다. 아래는 Case 2에서 쓰는 표준 trace.
 
@@ -79,10 +79,21 @@ python hotpotqa/build_hotpotqa_workload.py \
   --output hotpotqa/hotpotqa_longctx_2000_4000.jsonl
 ```
 
-각 trace는 1000 requests 규모다. 자세한 옵션은 각 폴더의 `README.md` 참고.
+각 trace는 1000 requests 규모다. `output_token_len`은 trace에 원래 응답 길이로
+저장되고, `static/` runner가 요청을 보낼 때 `max_tokens =
+min(output_token_len, 1776)`으로 소비한다. 자세한 옵션은 각 폴더의 `README.md`
+참고.
 
 ## runner와의 연결
 
 runner는 기본적으로 `JJ_ROOT/workloads/...`에서 trace를 찾는다(`--workloads-root`).
 이 폴더에서 생성한 trace를 쓰려면 runner에 `--workloads-root`를 이 경로로 주거나,
 `--chat-trace` / `--agent-trace` / `--longctx-trace`로 직접 지정한다.
+
+현재 Case 2 static 기준:
+
+```text
+server --max-model-len = 8192
+request max_tokens     = min(trace output_token_len, 1776)
+agent SLO              = 200 ms
+```

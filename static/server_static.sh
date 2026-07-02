@@ -26,7 +26,7 @@ QUOTA_SERVE_CONFIG="${QUOTA_SERVE_CONFIG:-$VLLM_DIR/vllm/quota_serve/quota_serve
 
 case "$MIX" in
   longctx) MAXLEN=8192 ;;    # §2 고정값
-  agent)   MAXLEN=12288 ;;   # §8.4.2: agent trajectory는 context가 길다
+  agent)   MAXLEN=8192 ;;    # §2 고정값 (max-model-len 8192로 통일)
   *) echo "unknown mix: $MIX (longctx|agent)"; exit 1 ;;
 esac
 

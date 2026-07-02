@@ -12,7 +12,7 @@ _Multi-hop QA · 10 Wikipedia paragraphs · Length-filtered longctx antagonist_
 
 ## 개요
 
-HotpotQA(`hotpotqa/hotpot_qa`)의 distractor setting을 longctx workload JSONL trace로 변환합니다. `hypothesis_validation`의 Chat + Longctx mixed 실험에서 **RAG보다 긴 3k 내외 antagonist**로 사용합니다.
+HotpotQA(`hotpotqa/hotpot_qa`)의 distractor setting을 longctx workload JSONL trace로 변환합니다. QuotaServe Case 2 static의 Chat + Longctx 실험에서 **RAG보다 긴 3k 내외 antagonist**로 사용합니다.
 
 > [!IMPORTANT]
 > 원본 데이터셋은 수정하지 않습니다. HotpotQA row의 10개 Wikipedia paragraph를 원본 순서대로 사용하고, 완성된 prompt의 tokenizer 기준 길이가 지정 band에 들어오는 row만 trace로 샘플링합니다.
@@ -66,7 +66,7 @@ python build_hotpotqa_workload.py \
 | `--min-prompt-tokens` | prompt 토큰 하한. 기본은 `2000`입니다. |
 | `--max-prompt-tokens` | prompt 토큰 상한. 기본은 `4000`입니다. |
 | `--split` | 사용할 split. 기본은 `train`입니다. `validation`은 작은 sanity check용으로만 사용합니다. |
-| `--tokenizer` | `prompt_token_len` / `output_token_len` 계산용 tokenizer. 기본은 run_mixed의 모델과 동일합니다. |
+| `--tokenizer` | `prompt_token_len` / `output_token_len` 계산용 tokenizer. 기본은 static runner의 모델과 동일합니다. |
 | `--max-output-tokens` | `output_token_len` 상한. 양수면 그 값으로 clamp해 과도하게 긴 decode를 막습니다. |
 
 > [!NOTE]
@@ -83,7 +83,7 @@ python build_hotpotqa_workload.py \
 | `messages` | ✅ | 모델 입력 (instruction + Wikipedia context + question). 서버로 전송 |
 | `prompt` | ✅ | `messages`와 동일 내용의 평문. messages가 없는 러너를 위한 fallback |
 | `request_id` | ✅ | trace 요청 ID (`hotpotqa-longctx-{n}`). 결과 JSONL과 매칭하는 키 |
-| `output_token_len` | ✅ | 정답 토큰 수. `run_mixed`가 max_tokens로 소비해 decode 길이를 현실화 |
+| `output_token_len` | ✅ | 정답 토큰 수. static runner가 `max_tokens = min(output_token_len, 1776)`으로 소비해 decode 길이를 현실화 |
 | `output_text` | ✅ | HotpotQA 정답. 생성 결과 채점·참조용 |
 | `prompt_token_len` | ✅ | prompt 토큰 수. length/pressure sweep과 band 필터 검증의 핵심 축 |
 | `prompt_char_len` | ✅ | prompt 문자 길이. 보조 길이 지표 |

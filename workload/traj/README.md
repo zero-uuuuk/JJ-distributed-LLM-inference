@@ -128,38 +128,31 @@ python workloads/traj/build_traj_agent_workload.py \
 
 ## Runner Usage
 
-Agent-only:
+QuotaServe Case 2 static의 Chat + Agent 실험은 `quotaserve/static` runner로 실행한다.
+서버는 `--max-model-len 8192`, 클라이언트 요청은 `max_tokens =
+min(output_token_len, 1776)`, agent SLO는 `200ms` 기준이다.
 
 ```bash
-python hypothesis_validation/agent_validation/run_trace_agent.py \
-  --trace workloads/traj/traj_agent_100session_10step.jsonl \
-  --phase agent_only_exponential \
-  --agent-target-rps 5 \
-  --agent-steps-per-session 10 \
-  --agent-tool-gap-mode exponential \
-  --agent-tool-gap-mean 2 \
-  --agent-tool-gap-max 20 \
-  --num-prompts 1000 \
-  --slo-ms 10000 \
-  --output hypothesis_validation/agent_validation/raw_results/agent_only_exp2_cap20_apc_on_len12288.jsonl
+# terminal A
+cd quotaserve/static
+./server_static.sh agent off
+
+# terminal B
+cd quotaserve/static
+./run_static.sh agent off
 ```
 
-Chat + Agent:
+Static mode:
 
 ```bash
-python hypothesis_validation/agent_validation/run_mixed_agent.py \
-  --chat-trace workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
-  --agent-trace workloads/traj/traj_agent_100session_10step.jsonl \
-  --phase chat_agent_exponential \
-  --chat-qps 5 \
-  --agent-target-rps 5 \
-  --agent-steps-per-session 10 \
-  --agent-tool-gap-mode exponential \
-  --agent-tool-gap-mean 2 \
-  --agent-tool-gap-max 20 \
-  --num-chat-prompts 1000 \
-  --num-agent-prompts 1000 \
-  --chat-slo-ms 400 \
-  --agent-slo-ms 10000 \
-  --output hypothesis_validation/agent_validation/raw_results/chat_traj_agent_exp2_cap20_apc_on_len12288.jsonl
+# terminal A
+cd quotaserve/static
+./server_static.sh agent static
+
+# terminal B
+cd quotaserve/static
+./run_static.sh agent static
 ```
+
+직접 trace 경로를 지정하려면 `run_mixed_agent_c2.py --agent-trace` 또는
+`--workloads-root`를 사용한다.

@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -29,11 +30,9 @@ DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
-DEFAULT_AGENT_SLO_MS = 10000.0
+DEFAULT_AGENT_SLO_MS = 200.0
 DEFAULT_CHAT_SLO_MS = 400.0
-DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
-    "chat": 691,
-}
+DEFAULT_MAX_OUTPUT_TOKENS = 1776
 
 # static/run_mixed_agent_c2.py 위치 기준. 출력은 static/ 아래에 둔다.
 STATIC_DIR = Path(__file__).resolve().parent
@@ -211,20 +210,12 @@ def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_max_token_cap(workload_tag: str) -> int | None:
-    return DEFAULT_MAX_TOKENS_BY_WORKLOAD.get(workload_tag.lower())
-
-
 def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
     row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
-    token_cap = resolve_max_token_cap(workload_tag)
+    token_cap = DEFAULT_MAX_OUTPUT_TOKENS
 
-    if row_max_tokens is None and token_cap is None:
-        return DEFAULT_FALLBACK_MAX_TOKENS
     if row_max_tokens is None:
-        return max(1, int(token_cap))
-    if token_cap is None:
-        return max(1, int(row_max_tokens))
+        return DEFAULT_FALLBACK_MAX_TOKENS
     return max(1, int(min(row_max_tokens, token_cap)))
 
 
@@ -291,7 +282,11 @@ async def send_one(
         try:
             # SSE 스트리밍(stream=True + include_usage): 토큰이 "data: {...}"로
             # 하나씩 오고, 끝에 usage(캐시 hit 포함) 청크가 온다.
-            async with session.post(url, json=payload) as response:
+            # QuotaServe PR 2: workload 태그를 X-Request-Id로 실어 보낸다. vLLM은
+            # 이 헤더를 request_id로 반영(chatcmpl-<태그>-<uuid>)하고, 서버측
+            # collector가 request_id에서 workload를 추론해 block owner로 쓴다.
+            headers = {"X-Request-Id": f"{workload_tag}-{uuid.uuid4().hex}"}
+            async with session.post(url, json=payload, headers=headers) as response:
                 if response.status != 200:
                     error = f"http {response.status}: {(await response.text())[:200]}"
                 else:
@@ -652,7 +647,7 @@ def summarize_workload(
     total_input = sum((r["prompt_tokens"] or 0) for r in ok)
     total_output = sum((r["completion_tokens"] or 0) for r in ok)
     # SLO attainment = (TTFT ≤ SLO 성공 수) / (성공 + 실패). 분모에 실패 포함이라
-    # 타임아웃도 위반으로 계산. agent는 SLO가 10s로 chat(400ms)보다 느슨하다(§2).
+    # 타임아웃도 위반으로 계산. agent SLO는 APC ON single 기준 p95인 200ms다(§2).
     slo_attainment = (
         sum(1 for t in ttfts if t <= slo_ms) / (len(ok) + len(failed))
         if slo_ms is not None and (ok or failed)

@@ -12,7 +12,7 @@ _Real RAG · Shared corpus · Reuse dial_
 
 ## 개요
 
-MS MARCO(`microsoft/ms_marco`)를 RAG workload JSONL trace로 변환합니다. `hypothesis_validation`의 Chat + RAG mixed 실험에서 **RAG workload**로 사용합니다.
+MS MARCO(`microsoft/ms_marco`)를 RAG workload JSONL trace로 변환합니다. QuotaServe Case 2 static/dynamic 확장 실험에서 **RAG antagonist workload**로 사용합니다.
 
 MS MARCO는 query마다 web에서 이미 검색된 passages(~10개)가 들어있는 공식 데이터셋이라, 별도 retriever 없이 진짜 RAG trace를 만들 수 있습니다. 공유 corpus(web)에서 온 passage이므로 인기 문서는 여러 query에 반복 등장해 **현실적이고 통제 가능한 prefix reuse**를 가지면서, query마다 대체로 다른 다수 passage를 생산해 가설의 **저-reuse 대용량(antagonist)** 역할을 합니다.
 
@@ -60,7 +60,7 @@ python build_msmarco_rag_workload.py \
 | `--top-k` | 요청당 사용할 passage 수입니다. 양수면 상위 k개만 사용해 RAG의 context 길이·부하(volume)를 줄이거나 키울 수 있습니다. |
 | `--normalize-passage-order` | 요청 내 passage를 본문 기준으로 정렬합니다. 같은 passage 집합이면 항상 같은 context가 되어, 순서만 달랐던 요청 사이에도 prefix cache hit가 늘어납니다. |
 | `--sort-by-context` | trace 전체를 context 기준으로 정렬합니다. 같거나 유사한 context를 공유하는 요청이 연속 배치되어 prefix cache 재사용이 극대화됩니다. |
-| `--tokenizer` | `output_token_len` 계산용 tokenizer. 기본은 run_mixed의 모델과 동일합니다. gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요. |
+| `--tokenizer` | `output_token_len` 계산용 tokenizer. 기본은 static runner의 모델과 동일합니다. gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요. |
 | `--max-output-tokens` | `output_token_len` 상한. 양수면 그 값으로 clamp해 과도하게 긴 decode를 막습니다. |
 
 > [!TIP]
@@ -82,7 +82,7 @@ python build_msmarco_rag_workload.py \
 | `messages` | ✅ | 모델 입력 (instruction + retrieved context + question). 서버로 전송 |
 | `prompt` | ✅ | `messages`와 동일 내용의 평문. messages가 없는 러너를 위한 fallback |
 | `request_id` | ✅ | trace 요청 ID. 결과 JSONL과 매칭하는 키 |
-| `output_token_len` | ✅ | GT 답변 토큰 수. `run_mixed`가 max_tokens로 소비해 RAG의 짧은 decode를 현실화 |
+| `output_token_len` | ✅ | GT 답변 토큰 수. static runner가 `max_tokens = min(output_token_len, 1776)`으로 소비해 RAG의 짧은 decode를 현실화 |
 | `output_text` | ✅ | 정답. 생성 결과 채점·참조용 |
 | `context_char_len`, `prompt_char_len` | ✅ | RAG context·prompt 길이. length/pressure sweep 분석용 |
 | `answer` | – | `output_text`와 동일 값 (RAG 빌더 관례상 중복 보존) |

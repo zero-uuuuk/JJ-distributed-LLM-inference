@@ -12,7 +12,8 @@ _Multi-turn · Delayed prefix reuse · Victim workload_
 
 ## 개요
 
-ShareGPT 원시 데이터를 multi-turn 대화 trace로 변환합니다. `hypothesis_validation`의 Chat + RAG mixed 실험에서 **Chat workload**로 사용합니다.
+ShareGPT 원시 데이터를 multi-turn 대화 trace로 변환합니다. QuotaServe Case 2
+static 실험에서 **Chat victim workload**로 사용합니다.
 
 가설에서 Chat은 **high-reuse·long-gap victim** 역할입니다. multi-turn 대화는 이전 턴의 prefix를 다음 턴에서 다시 쓰지만, 그 사이 think-time gap이 길어 RAG가 만든 대량 block에 의해 hot cache가 밀려나기 쉽습니다.
 
@@ -55,7 +56,7 @@ uv pip install -r requirements.txt
 | `--min-turns` | 최소 turn 수. victim trace에서는 `9`처럼 설정해 같은 `conversation_id`가 여러 turn에 걸쳐 반복되도록 보장합니다. |
 | `--max-turns` | conversation별 최대 turn 수. `0` 이하이면 제한하지 않습니다. |
 | `--order` | 요청 저장 순서. `turn-major`(기본)는 같은 turn 번호끼리 먼저 배치합니다. `conversation-major`는 대화 단위로 이어 붙입니다. |
-| `--tokenizer` | `output_token_len` 계산용 tokenizer. 기본은 run_mixed의 모델과 동일합니다. gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요. |
+| `--tokenizer` | `output_token_len` 계산용 tokenizer. 기본은 static runner의 모델과 동일합니다. gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요. |
 | `--max-output-tokens` | `output_token_len` 상한. 양수면 그 값으로 clamp해 과도하게 긴 decode를 막습니다. |
 
 > [!NOTE]
@@ -75,7 +76,7 @@ uv pip install -r requirements.txt
 | 필드 | 쓰임 | 의미 |
 |---|:---:|---|
 | `messages` | ✅ | 모델 입력. 누적된 대화 이력(history + 현재 user 발화). 서버로 전송 |
-| `output_token_len` | ✅ | GT 응답 토큰 수. `run_mixed`가 max_tokens로 소비해 decode 길이를 현실화 |
+| `output_token_len` | ✅ | GT 응답 토큰 수. static runner가 `max_tokens = min(output_token_len, 1776)`으로 소비해 decode 길이를 현실화 |
 | `output_text` | ✅ | GT assistant 응답. 생성 결과 채점·참조용 |
 | `request_id` | ✅ | trace 요청 ID (`{conversation_id}_turn_{n}`). 결과 매칭 키 |
 | `conversation_id` | ✅ | 대화 ID. 같은 대화의 turn들을 묶어 delayed reuse 분석 |

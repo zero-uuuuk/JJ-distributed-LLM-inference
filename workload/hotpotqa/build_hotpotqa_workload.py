@@ -4,7 +4,7 @@
   1. Hugging Face datasets에서 HotpotQA distractor split을 로드한다.
   2. question과 10개 Wikipedia context paragraph를 원본 순서대로 프롬프트화한다.
   3. tokenizer 기준 prompt 길이가 지정 band에 들어오는 row만 선택한다.
-  4. run_trace.py / run_mixed.py가 소비할 수 있는 JSONL trace와 메타데이터를 저장한다.
+  4. static runner가 소비할 수 있는 JSONL trace와 메타데이터를 저장한다.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any
 DEFAULT_DATASET_NAME = "hotpotqa/hotpot_qa"
 DEFAULT_SUBSET = "distractor"
 DEFAULT_SPLIT = "train"
-# run_mixed.py의 DEFAULT_MODEL과 일치시켜 prompt/output 토큰 수가 실제 서빙 토큰 수와 맞도록 한다.
+# static runner의 DEFAULT_MODEL과 일치시켜 prompt/output 토큰 수가 실제 서빙 토큰 수와 맞도록 한다.
 DEFAULT_TOKENIZER = "meta-llama/Llama-3.2-3B-Instruct"
 DEFAULT_NUM_REQUESTS = 1000
 DEFAULT_MIN_PROMPT_TOKENS = 2000
@@ -41,7 +41,7 @@ Keep the answer concise."""
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    """dict 리스트를 run_trace.py / run_mixed.py용 JSONL 파일로 저장한다."""
+    """dict 리스트를 static runner용 JSONL 파일로 저장한다."""
     resolved_path = path.expanduser().resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--tokenizer",
         default=DEFAULT_TOKENIZER,
         help=(
-            "prompt/output 토큰 수 계산용 tokenizer입니다. run_mixed의 모델과 일치시킵니다. "
+            "prompt/output 토큰 수 계산용 tokenizer입니다. static runner의 모델과 일치시킵니다. "
             "gated 모델 접근이 안 되면 접근 가능한 tokenizer로 바꿔 지정하세요."
         ),
     )
@@ -221,7 +221,7 @@ def build_output_item(
     """HotpotQA longctx JSONL row와 분석용 메타데이터를 만든다."""
     answer = str(row.get("answer", "")).strip()
     return {
-        # run_trace.py / run_mixed.py가 식별할 요청 ID와 OpenAI-compatible 입력.
+        # static runner가 식별할 요청 ID와 OpenAI-compatible 입력.
         "request_id": f"hotpotqa-longctx-{emitted_index:06d}",
         "messages": [{"role": "user", "content": prompt}],
         "prompt": prompt,
