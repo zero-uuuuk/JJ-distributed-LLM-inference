@@ -61,9 +61,9 @@ static/
   config schema가 들어가 있어야 한다.
 - static 정책 collector/victim selection은 PR 3/4 소관이다. 그 전엔 `off`로
   baseline parity만 확인한다.
-- workload trace는 `../workload/`에서 생성하거나 JJ repo에 있어야 한다
+- workload trace는 `../workloads/`에서 생성하거나 JJ repo에 있어야 한다
   (runner `--workloads-root`, 기본 `JJ_ROOT/workloads`). trace 생성은
-  [../workload/README.md](../workload/README.md) 참고.
+  [../workloads/README.md](../workloads/README.md) 참고.
 
 ## 고정 실행 기준
 
