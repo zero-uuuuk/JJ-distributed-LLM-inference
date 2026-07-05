@@ -12,7 +12,7 @@
 #
 # 환경 변수(override 가능):
 #   VLLM_DIR           vLLM fork 경로            (기본 ~/vllm)
-#   QUOTA_SERVE_CONFIG quota_serve.yaml 경로     (기본 $VLLM_DIR/vllm/quota_serve/quota_serve.yaml)
+#   QUOTA_SERVE_CONFIG quota_serve.yaml 경로     (기본 $STATIC_DIR/configs/quota_serve.yaml)
 #   MODEL              모델 id
 set -euo pipefail
 
@@ -22,7 +22,7 @@ MODE="${2:-static}"
 STATIC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VLLM_DIR="${VLLM_DIR:-$HOME/vllm}"
 MODEL="${MODEL:-meta-llama/Llama-3.2-3B-Instruct}"
-QUOTA_SERVE_CONFIG="${QUOTA_SERVE_CONFIG:-$VLLM_DIR/vllm/quota_serve/quota_serve.yaml}"
+QUOTA_SERVE_CONFIG="${QUOTA_SERVE_CONFIG:-$STATIC_DIR/configs/quota_serve.yaml}"
 
 case "$MIX" in
   longctx) MAXLEN=8192 ;;    # §2 고정값

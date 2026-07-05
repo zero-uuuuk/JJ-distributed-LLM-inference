@@ -4,7 +4,7 @@
 
 **Workload-aware Prefix Cache Quota — Case 2 Static Implementation Roadmap**
 
-_PR0 Dry-run → Static (fixed quota) → (이후) Dynamic single-signal_
+_PR0 Hook map → Static (fixed quota) → (이후) Dynamic single-signal_
 
 </div>
 
@@ -33,12 +33,12 @@ Case 2는 Case 1과 동일한 워크로드 trace를 그대로 사용한다. 새�
 | `longctx` | `workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl` | cold antagonist (low-reuse, prefill-heavy) | `workloads/hotpotqa/build_hotpotqa_workload.py` |
 | `agent` | `workloads/traj/traj_agent_100session_10step.jsonl` | warm antagonist (delayed self-reuse) | `workloads/traj/build_traj_agent_workload.py` |
 
-각 trace는 `1000 requests`이고, request_id는 workload 별 prefix로 시작한다:
+각 trace는 `1000 requests`이다. 원본 trace의 `request_id`는 결과 분석용으로 유지하고, QuotaServe workload tag는 실험 runner가 전송 시 붙이는 `X-Request-Id` prefix를 기준으로 한다.
 
 ```text
-chat_{conversation_id}_turn_{n}
-hotpotqa-longctx-{n}        # longctx
-agent_{session_id}_step_{n}
+X-Request-Id: chat-{uuid}
+X-Request-Id: longctx-{uuid}
+X-Request-Id: agent-{uuid}
 ```
 
 이 prefix가 **PR 2의 workload 태그 추출 단서**가 된다.
@@ -52,7 +52,7 @@ agent_{session_id}_step_{n}
 | Instance | `g5.xlarge` (single GPU) |
 | Model | `meta-llama/Llama-3.2-3B-Instruct` |
 | `--max-model-len` | `8192` |
-| max output tokens | `1776` (요청별 생성 토큰 상한. 기존 trace의 최대 `output_token_len` 기준) |
+| max output tokens | workload별 cap: `chat=691`, `rag=205`, `longctx=41`, `agent=1776` |
 | `--max-num-seqs` | `32` |
 | `--gpu-memory-utilization` | `0.6` |
 | Per-workload QPS | `5.0` |
@@ -62,7 +62,7 @@ agent_{session_id}_step_{n}
 | Trace size | `1000 requests/workload` |
 
 > [!NOTE]
-> `max output tokens`는 server의 `--max-model-len`이 아니라 요청을 보낼 때 적용하는 생성 길이 상한이다. `--max-model-len=8192`로 낮춘 기준이므로, agent 요청의 `input_tokens + output_token_len`이 8192를 넘지 않는지는 실행 전 sanity check한다.
+> `max output tokens`는 server의 `--max-model-len`이 아니라 요청을 보낼 때 적용하는 생성 길이 상한이다. 각 요청은 `min(trace output_token_len, workload별 cap)`을 사용한다. `1776`은 agent cap이자 전체 workload cap 중 최대값이다. `--max-model-len=8192` 기준에서 agent 요청의 `input_tokens + output_token_len`이 8192를 넘지 않는지는 실행 전 sanity check한다.
 
 Case 1의 `RUN_MIXED.md`와 동일한 server 명령을 그대로 쓴다. Case 2에서는 `QUOTA_SERVE_MODE`, `QUOTA_SERVE_CONFIG` 등 env var만 추가한다.
 
@@ -72,11 +72,11 @@ Case 1의 `RUN_MIXED.md`와 동일한 server 명령을 그대로 쓴다. Case 2�
 
 | PR | 범위 | 왜 하는가 | 산출 | 검증 기준 |
 |---|---|---|---|---|
-| **PR 0** | vLLM hook map + dry-run shadow policy | 실제 정책을 바꾸기 전에 block lifecycle 관측 지점과 dry-run 비교 경로를 확보한다. | hook 위치 문서, `mode=dry_run` | shadow 로그가 채워지지만 실제 victim은 LRU와 동일 |
-| **PR 1** | config schema + `mode=off` parity | QuotaServe를 켜고 끄는 설정 진입점을 만들고, 꺼진 상태에서는 baseline을 절대 깨지 않음을 보장한다. | `quota_serve.yaml`, env loader | `mode=off`가 baseline LRU와 동일 결과 |
-| **PR 2** | request workload tag | eviction/caching 사건을 workload 단위로 귀속할 수 있게 request에 workload 정체성을 붙인다. | tag 추출/전파 경로 | eviction 로그의 `trigger_workload`가 trace prefix와 일치 |
-| **PR 3** | block owner + occupancy counter | 각 cached block의 owner와 workload별 `occupancy_w`를 알아야 `occupancy_w > quota_w` 판단이 가능하다. | `block.workload_id`, `state[w].evictable_cached` + flag | invariant check pass |
-| **PR 4** | static quota victim selection | 고정 단일 `quota_w`만으로 LRU보다 나은 victim 선택이 가능한지 먼저 검증한다. | `quota_aware_select_victim` (2-tier) | `chat ← longctx` useful eviction 감소 |
+| **PR 0** | vLLM hook map + baseline observation | 실제 정책을 바꾸기 전에 block lifecycle 관측 지점과 baseline LRU eviction 기록 경로를 확보한다. | hook 위치 문서, baseline eviction log | 실제 victim은 LRU와 동일 |
+| **PR 1** | config schema + `mode=off` parity | QuotaServe를 켜고 끄는 설정 진입점을 만들고, 꺼진 상태에서는 baseline을 절대 깨지 않음을 보장한다. | `config.py`, `quotaserve/static/configs/quota_serve.yaml`, env loader | `mode=off`가 baseline LRU와 동일 결과 |
+| **PR 2** | request workload tag | eviction/caching 사건을 workload 단위로 귀속할 수 있게 request에 workload 정체성을 붙인다. | tag 추출/전파 경로 | `infer_workload(request.request_id)`가 `X-Request-Id` prefix와 일치 |
+| **PR 3** | block owner + occupancy counter | 각 cached block의 owner와 workload별 `occupancy_w`를 알아야 `occupancy_w > quota_w` 판단이 가능하다. | `block.workload_tag`, `collector.occupancy[w]` + flag | invariant check pass |
+| **PR 4** | static quota victim selection | 고정 단일 `quota_w`만으로 LRU보다 나은 victim 선택이 가능한지 먼저 검증한다. | `collector.select_victim` (2-tier) | `chat ← longctx` useful eviction 감소 |
 | PR 5 | shadow cache → online signal | eviction된 block이 나중에 victim workload에게 다시 필요했는지를 runtime에서 **cross-workload useful eviction ratio**로 관측한다. | runtime `useful_eviction_ratio_w` 집계 | tick log가 신호 변화 추적 |
 | PR 6 | profile → `ratio_low/high` + `floor/cap` 도출 | static sweep 결과에서 기준선과 workload별 quota 범위를 뽑는다. | profile curve, `ratio_low/high`, `floor/cap` | quota↑에 따라 useful eviction ratio↓ curve 확인 |
 | PR 7 | `dynamic` | 단일 `quota_w`를 useful eviction ratio에 따라 `±step`으로 움직이고 `[floor,cap]`에 clamp한다. | dynamic quota controller | Case 2 main 실험에 사용 |
@@ -85,13 +85,13 @@ PR 0~PR 4까지가 본 문서의 1차 목표다.
 
 ---
 
-## 4. PR 0 — vLLM hook map + dry-run shadow policy
+## 4. PR 0 — vLLM hook map + baseline observation
 
 > [!IMPORTANT]
-> **이 PR이 가장 먼저 들어가야 한다.** 실제 victim 선택은 바꾸지 않고, "QuotaServe가 적용되었다면 어떤 block을 victim으로 골랐을지"만 별도 로그로 남긴다.
+> **이 PR이 가장 먼저 들어가야 한다.** 실제 victim 선택은 바꾸지 않고, vLLM의 block lifecycle과 baseline LRU eviction을 관측할 hook 위치만 확정한다.
 > 이 단계의 목표는 두 가지다.
 > 1. vLLM block manager의 어느 함수 어느 줄에 hook을 걸어야 하는지 코드 베이스에 못 박는다.
-> 2. 이후 PR에서 실제 정책으로 전환할 때, dry-run 로그와 실제 동작의 일치 여부로 회귀를 즉시 잡는다.
+> 2. 이후 PR에서 owner attribution, occupancy counter, victim selection을 같은 hook 위에 얹을 수 있게 한다.
 
 ### 4.1 Hook map 문서화
 
@@ -99,56 +99,34 @@ vLLM의 prefix cache eviction path에서 다음 위치를 식별하고 주석으
 
 | Hook | 호출 시점 | 들어가야 할 정보 |
 |---|---|---|
-| `on_block_allocate(block, request)` | 새 KV block이 할당될 때 | `request.workload_id`, `block.id` |
-| `on_block_cached(block)` | block이 cached 상태가 될 때 (ref=0 + has hash) | owner workload, hash |
-| `on_block_hit(block, request)` | cached block hit | hit-side workload, owner workload |
-| `on_block_evict(block, trigger_request)` | block이 eviction되어 제거됨 | evicted owner workload, trigger workload, hash |
-| `on_select_victim(free_queue, trigger_request)` | LRU victim을 고르기 직전 | hook return으로 victim 후보 override |
+| `on_block_allocated(block, request)` | 새 KV block이 할당될 때 | `request.request_id` prefix, `block.id` |
+| `on_block_cached(block, request)` | block이 cached 상태가 될 때 (ref=0 + has hash) | owner workload, hash |
+| `on_block_accessed(block, request)` | cached block hit으로 ref_cnt가 증가할 때 | hit-side workload, owner workload |
+| `on_block_freed(block, prev_ref, new_ref)` | block ref_cnt가 감소할 때 | owner workload, ref_cnt 전이 |
+| `on_block_evicted(block, trigger_request, ...)` | block이 eviction되어 제거됨 | evicted owner workload, trigger workload, hash |
 
-각 hook의 정확한 vLLM 함수명/줄번호는 PR 0에서 코드 인스펙션으로 확정해 본 문서에 채워 넣는다.
+각 hook의 정확한 vLLM 함수명/줄번호는 `docs/VlLLM_EDITED.md`의 hook map에 기록한다.
 
-### 4.2 Dry-run shadow policy 구현
+### 4.2 검증
 
-```python
-class QuotaServeShadowPolicy:
-    """Logs what QuotaServe WOULD pick. Never changes actual victim."""
-
-    def on_select_victim(self, free_queue, trigger_request):
-        actual_victim = free_queue.head  # what vLLM will actually evict
-        shadow_victim = self._quota_aware_select(free_queue, trigger_request)
-
-        log_jsonl({
-            "ts": now(),
-            "trigger_workload": trigger_request.workload_id,
-            "actual_victim_workload": actual_victim.workload_id,
-            "shadow_victim_workload": shadow_victim.workload_id,
-            "match": actual_victim.id == shadow_victim.id,
-            "reason": shadow_victim.selection_reason,
-        })
-
-        return actual_victim  # 절대 바꾸지 않는다
-```
-
-이렇게 두면 PR 4의 static victim selection 로직을 미리 dry-run 모드로 검증할 수 있다.
-
-### 4.3 검증
-
-- `mode=dry_run`으로 Chat+Longctx mixed run 1회 실행
-- shadow 로그에서 `match=False`(QuotaServe라면 다른 victim을 골랐을) 비율이 0%가 아닌지 확인
-- 실제 결과(hit rate, TTFT, SLO)는 baseline LRU와 통계적으로 동일해야 한다 (정책이 실제로는 안 바뀌었으므로)
+- `mode=off`로 Chat+Longctx mixed run 1회 실행
+- baseline eviction log가 채워지는지 확인
+- 실제 결과(hit rate, TTFT, SLO)는 Case 1 baseline LRU와 통계적으로 동일해야 한다
 
 ---
 
 ## 5. PR 1 — Config schema + `mode=off` parity
 
-### 5.1 Config 스키마 (`vllm/quota_serve/config.yaml` 또는 env)
+### 5.1 Config 스키마 (`vllm/quota_serve/config.py` + `quotaserve/static/configs/quota_serve.yaml` / env)
 
 static은 workload별 **단일 `quota_ratio`**만 쓴다. `floor/cap`은 dynamic에서 profile로 도출되는 범위이므로 static config에는 두지 않는다.
+
+`config.py`는 vLLM runtime이 import하는 schema/loader 코드이고, `quota_serve.yaml`은 sweep 실험 관리를 위해 `quotaserve/static/configs/`에 둔다.
 
 ```yaml
 quota_serve:
   enabled: true
-  mode: "off"   # off | dry_run | static | dynamic
+  mode: "off"   # off | static | dynamic
   tick_sec: 30          # dynamic 전용 (static 미사용)
   shadow_ttl_sec: 120   # PR 5 shadow cache 전용
 
@@ -195,29 +173,16 @@ quota_serve:
 
 ### 6.1 추출 규칙 (MVP)
 
-`request_id`의 prefix에서 추출한다.
-
-```python
-def infer_workload(request_id: str) -> str:
-    if request_id.startswith("chat_"):
-        return "chat"
-    if request_id.startswith("hotpotqa-"):
-        return "longctx"
-    if request_id.startswith("agent_"):
-        return "agent"
-    if request_id.startswith("rag_") or request_id.startswith("msmarco-"):
-        return "rag"
-    return "unknown"
-```
-
+`X-Request-Id` 헤더로 보낸 `request_id` prefix에서 추출한다.
 > [!NOTE]
-> Case 1에서는 `user` 필드에 workload 태그를 박았다(`run_mixed.py`). PR 2에서는 두 경로를 모두 받아들이되, **`user` 필드를 우선**한다. 명시 태그가 없을 때 `request_id` prefix로 fallback.
+> PR 2의 workload tag 전달 경로는 `X-Request-Id`이다. `user` 필드는 vLLM core의 KV cache 경로까지 안정적으로 내려오지 않으므로 QuotaServe가 workload를 판단하는 기준으로 사용하지 않는다.
 
 ### 6.2 전파 경로
 
-- API request 진입점에서 `workload_id` 추출
-- `Request` / `Sequence` 객체에 attribute로 추가
-- block allocation 시 owner workload로 사용
+- client가 `X-Request-Id: {workload_tag}-{uuid}`를 전송
+- vLLM이 이 값을 내부 `request.request_id`로 전달
+- PR 2에서는 `infer_workload(request.request_id)`가 workload tag를 올바르게 복원하는지만 보장한다.
+- PR 3에서 block allocation 시 이 결과를 block owner로 저장한다.
 
 ### 6.3 검증
 
@@ -232,12 +197,13 @@ def infer_workload(request_id: str) -> str:
 ### 7.1 Block metadata
 
 ```python
-class KVBlock:
-    workload_id: str | None              # PR 3에서 추가 (= owner_workload)
+class KVCacheBlock:
+    workload_tag: str | None            # PR 3에서 추가 (= owner tag)
     is_counted_as_evictable_cached: bool # PR 3에서 추가, 초기 False
 ```
 
-- `workload_id`는 **block을 (재)할당한 request의 workload**로 설정하고, block이 free→재할당될 때 새 owner로 overwrite한다.
+- vLLM의 `kv_cache_utils.py`에 있는 기존 `KVCacheBlock`을 사용한다. `KVCacheBlock`은 `slots=True`라 동적 attribute를 붙일 수 없으므로, 필요한 metadata는 dataclass field로 추가한다.
+- `workload_tag`는 **block을 (재)할당한 request의 workload tag**로 설정하고, block이 free→재할당될 때 새 owner로 overwrite한다.
 - 다른 workload가 hit해도 owner 유지(hit-side는 owner를 바꾸지 않는다).
 
 ### 7.2 Counter 자료구조
@@ -245,10 +211,13 @@ class KVBlock:
 static이 실제로 쓰는 counter는 **occupancy 하나**다.
 
 ```python
-state: dict[str, WorkloadState]
+occupancy: dict[str | None, int]
 
-class WorkloadState:
-    evictable_cached: int = 0   # = occupancy_w : ref_cnt==0 and is_cached_prefix
+# occupancy[w] == count(block where
+#     block.workload_tag == w
+#     and block.ref_cnt == 0
+#     and block.block_hash is not None
+# )
 ```
 
 `occupancy_w`는 workload `w`가 현재 들고 있는 evictable cached prefix block 수다(`ref_cnt>0` running block은 제외).
@@ -258,19 +227,24 @@ class WorkloadState:
 
 ### 7.3 Counter 업데이트 지점 (flag 기반 상태 전이)
 
-이벤트가 아니라 **상태 전이**(`ref_cnt==0 and is_cached_prefix`)로 갱신한다. **한 함수에 wrapping**하여 ref_cnt/is_cached 변경을 모두 통과시킨다.
+이벤트가 아니라 **상태 전이**(`ref_cnt==0 and cached`)로 갱신한다. **한 함수에 wrapping**하여 ref_cnt/cached 변경을 모두 통과시킨다. counter와 flag 갱신은 같은 lock 안에서 처리한다.
 
 ```python
-def maybe_update_evictable_count(block, prev_ref, new_ref):
-    is_cached = block.is_cached()
-    should_be_counted = (new_ref == 0) and is_cached
+quota_lock = Lock()
 
-    if should_be_counted and not block.is_counted_as_evictable_cached:
-        state[block.workload_id].evictable_cached += 1
-        block.is_counted_as_evictable_cached = True
-    elif not should_be_counted and block.is_counted_as_evictable_cached:
-        state[block.workload_id].evictable_cached -= 1
-        block.is_counted_as_evictable_cached = False
+def _recount(block):
+    with quota_lock:
+        should_be_counted = (
+            block.ref_cnt == 0
+            and block.block_hash is not None
+        )
+
+        if should_be_counted and not block.is_counted_as_evictable_cached:
+            occupancy[block.workload_tag] += 1
+            block.is_counted_as_evictable_cached = True
+        elif not should_be_counted and block.is_counted_as_evictable_cached:
+            occupancy[block.workload_tag] -= 1
+            block.is_counted_as_evictable_cached = False
 ```
 
 ### 7.4 적용 지점 grep checklist
@@ -279,7 +253,7 @@ PR 3 머지 전 반드시 다음을 확인한다.
 
 - [ ] `ref_cnt += 1`이 일어나는 모든 줄에서 wrapper 호출
 - [ ] `ref_cnt -= 1`이 일어나는 모든 줄에서 wrapper 호출
-- [ ] block이 cache에 등록되는 시점 (`is_cached: False → True`)에서 wrapper 호출
+- [ ] block이 cache에 등록되는 시점 (`block_hash: None → not None`)에서 wrapper 호출
 - [ ] block이 eviction되어 cache에서 빠지는 시점에서 wrapper 호출
 - [ ] block free path 전부
 
@@ -288,8 +262,8 @@ PR 3 머지 전 반드시 다음을 확인한다.
 static에는 제어 tick 루프가 없다(§9 참조). 따라서 이 검사는 tick이 아니라 **구현 초기 디버그 단계에서 eviction 시점마다**(부담되면 매 K회 eviction마다, 또는 디버그 타이머로 주기적으로) 돌린다. `count_blocks(...)`는 전체 block을 훑는 O(N) 스캔이라 상시로 두지 말고 디버그 빌드/샘플링으로 제한한다.
 
 ```python
-actual = count_blocks(lambda b: b.ref_cnt == 0 and b.is_cached())
-expected = sum(s.evictable_cached for s in state.values())
+actual = count_blocks(lambda b: b.ref_cnt == 0 and b.block_hash is not None)
+expected = sum(occupancy.values())
 assert actual == expected, f"counter drift: {actual} vs {expected}"
 ```
 
@@ -301,40 +275,41 @@ drift가 발견되면 owner 기록 / 상태 전이 처리 / eviction hook 중 �
 
 ### 8.1 Hook 진입점
 
-PR 0의 `on_select_victim`을 실제로 정책에 사용한다.
+PR 4에서 vLLM의 free queue victim 선택 경로에 quota-aware selector를 추가한다. 새 block이 여러 개 필요하면 `num_blocks`개를 한 번에 `popleft_n()`하지 않고, block 하나마다 `select_victim → remove → evict → allocate`를 반복한다. 이렇게 해야 매 eviction 뒤 갱신된 occupancy가 다음 victim 선택에 반영된다.
 
 ```python
-def select_victim(free_queue, trigger_request):
-    mode = quota_config.mode
+def get_new_blocks(num_blocks, trigger_request):
     if mode == "off":
-        return free_queue.head
-    if mode == "dry_run":
-        return _dry_run_select(free_queue, trigger_request)  # PR 0
-    if mode in ("static", "dynamic"):
-        return quota_aware_select_victim(free_queue, trigger_request)
+        return free_queue.popleft_n(num_blocks)  # baseline LRU
+
+    ret = []
+    for _ in range(num_blocks):
+        block, reason = collector.select_victim(free_queue, trigger_request)
+        free_queue.remove(block)
+        evict_if_cached(block, reason)
+        allocate(block, trigger_request)
+        ret.append(block)
+    return ret
 ```
 
-### 8.2 `quota_aware_select_victim` (2-tier)
+### 8.2 `collector.select_victim` (2-tier)
 
 `occupancy_w > quota_w`인 workload를 우선 victim 후보로 두고, 그 집합 안에서 LRU를 고른다. over-quota workload가 없으면 global LRU fallback이다.
 
 ```python
-def quota_aware_select_victim(free_queue, trigger_request):
-    if not quota_config.is_active:
-        return free_queue.head, "baseline_lru_off_mode"
-
+def select_victim(free_queue, trigger_request):
     head = free_queue.head
 
     # 0. head가 uncached free block이면 곧장 사용 → eviction 아님.
     #    cached block이 제거된 게 아니므로 eviction event log에 남기지 않는다.
-    #    (집계가 필요하면 free_block_used 카운터로 별도로 센다. §8.3 참조)
-    if not head.is_cached():
+    #    (집계가 필요하면 uncached_head 카운터로 별도로 센다. §8.3 참조)
+    if head.block_hash is None:
         return head, "uncached_head"   # non-eviction outcome
 
     # 1. over-quota workload 집합
     over_quota_workloads = {
         w for w in quota_config.workloads
-        if state[w].evictable_cached > _abs_quota(w)
+        if occupancy[w] > _abs_quota(w)
     }
     if not over_quota_workloads:
         return head, "fallback_no_over_quota"
@@ -346,8 +321,8 @@ def quota_aware_select_victim(free_queue, trigger_request):
     for block in scan_lru_head_until_found():
         if (
             block.ref_cnt == 0
-            and block.is_cached()
-            and block.workload_id in over_quota_workloads
+            and block.block_hash is not None
+            and block.workload_tag in over_quota_workloads
         ):
             return block, "over_quota_selected"
 
@@ -379,7 +354,7 @@ def _abs_quota(w):
   "victim_occupancy": 1200,
   "victim_quota": 1000,
   "is_cross_workload": true,
-  "selection_reason": "over_quota_selected | fallback_no_over_quota | baseline_lru_off_mode",
+  "selection_reason": "over_quota_selected | fallback_no_over_quota",
   "occupancy_snapshot": {"chat": 1200, "longctx": 300},
   "scan_steps": 37
 }
@@ -388,15 +363,14 @@ def _abs_quota(w):
 `evictor_workload != victim_workload`이면 cross-workload eviction이다.
 
 > [!IMPORTANT]
-> **eviction event log는 실제로 cached block이 제거된 경우에만 기록한다.** `uncached_head`(eviction 없이 free block 사용)는 eviction 사건이 아니므로 이 로그에 넣지 않는다 — 넣으면 useful eviction ratio·cross-workload 집계 분모에 non-eviction 케이스가 섞인다. free block 사용 빈도를 보고 싶으면 아래 `free_block_used` 카운터로 따로 센다.
+> **eviction event log는 실제로 cached block이 제거된 경우에만 기록한다.** `uncached_head`(eviction 없이 free block 사용)는 eviction 사건이 아니므로 이 로그에 넣지 않는다 — 넣으면 useful eviction ratio·cross-workload 집계 분모에 non-eviction 케이스가 섞인다. free block 사용 빈도는 `selection_counts["uncached_head"]`로 따로 센다.
 
 별도 메트릭(실험 종료 후 집계):
 
 ```text
 over_quota_selected count / ratio
 fallback_no_over_quota count / ratio
-baseline_lru_off_mode count
-free_block_used count            # uncached_head: eviction 아님, eviction 집계와 분리
+uncached_head count              # eviction 아님, eviction event log와 분리
 workload별 eviction count
 workload별 cross-workload eviction count
 workload별 useful eviction count / ratio   # shadow cache 기반
@@ -411,7 +385,7 @@ scan_steps_mean / p95
 VLLM_SERVER_DEV_MODE=1 \
 VLLM_EVICTION_LOG=/path/eviction_static_chat_longctx.jsonl \
 QUOTA_SERVE_MODE=static \
-QUOTA_SERVE_CONFIG=/path/quota_serve.yaml \
+QUOTA_SERVE_CONFIG=/path/to/quotaserve/static/configs/quota_serve.yaml \
 QUOTA_SERVE_LOG=/path/quota_static_chat_longctx.jsonl \
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
@@ -427,7 +401,6 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 | run | mode | 기대 |
 |---|---|---|
 | baseline | `off` | Case 1 결과 재현 |
-| dry-run | `dry_run` | baseline과 동일 결과 + shadow 로그 채워짐 |
 | static | `static` | `chat ← longctx` useful eviction 감소, Chat hit rate 회복 |
 
 검증 통과 기준:
@@ -520,8 +493,8 @@ hypothesis_validation/case2_validation/
 
 ## 12. 다음 작업 큐 (당장 할 것)
 
-1. PR 0: vLLM block manager의 eviction path를 정독하고 `on_select_victim` 등 hook 후보 위치 5곳에 주석 마커를 박는다. dry-run shadow policy class 추가.
-2. PR 1: `quota_serve.yaml` 스키마 확정(단일 `quota_ratio`) + `mode=off` parity test 통과.
+1. PR 0: vLLM block manager의 eviction path를 정독하고 lifecycle hook 후보 위치에 주석 마커를 박는다. baseline LRU eviction log가 채워지는지 확인한다.
+2. PR 1: `config.py` schema/loader와 `quotaserve/static/configs/quota_serve.yaml` 기본값 확정(단일 `quota_ratio`) + `mode=off` parity test 통과.
 3. Case 1 raw_results에서 Chat-only steady-state occupancy를 측정해 `chat.quota_ratio` 초기값 결정.
 4. PR 2~3 동시 진행 가능 (workload tag → block owner → occupancy counter).
 5. PR 4 static + Chat+Longctx 실험. `quota_ratio` sweep(예: chat 0.10/0.20/0.30/0.50, longctx 0.05/0.10/0.20)으로 useful eviction ratio 변화를 관찰하고, 이 profile로 dynamic 단계의 `ratio_low/high` 후보를 잡는다.

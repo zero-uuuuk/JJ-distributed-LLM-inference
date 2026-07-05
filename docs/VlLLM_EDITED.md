@@ -18,29 +18,36 @@ vLLM fork에 들어간 QuotaServe 변경을 PR 단위로 정리한다.
 - **Hook 보완**: `Request`를 `KVCacheManager → coordinator → single_type_manager → BlockPool`까지 전달하고, `KVCacheBlock(slots=True)`에 QuotaServe metadata 필드를 추가했다. 따라서 allocation/eviction/access hook이 실제 workload attribution에 쓸 request를 받을 수 있다.
 - **PR 1** (§7): QuotaServe config schema + loader 패키지(`vllm/quota_serve/`).
 - **PR 2/3** (§8): workload tag 추출(`X-Request-Id` 경유) + block owner attribution + workload별 occupancy counter. PR 3에서 collector를 scheduler에 wiring한다.
-- **PR 4** (§9): `occupancy_w > quota_w` 2-tier victim selection. **이 단계부터 mode=static/dynamic에서 eviction 순서가 baseline과 달라진다**(off/dry_run은 그대로).
+- **PR 4** (§9): `occupancy_w > quota_w` 2-tier victim selection. **이 단계부터 mode=static/dynamic에서 eviction 순서가 baseline과 달라진다**(off는 그대로).
 
 | 파일 | PR | 역할 | 비고 |
 |---|---|---|---|
 | `vllm/v1/core/kv_cache_metrics.py` | 0 | hook **정의** 지점 (collector 인터페이스) | +119 (수정) |
 | `vllm/v1/core/block_pool.py` | 0/4 | hook 배선 + quota-aware victim selection path | 수정 |
-| `vllm/v1/core/kv_cache_utils.py` | 0/3 prep | `KVCacheBlock` QuotaServe metadata 필드 | `workload_id`, counted flag |
+| `vllm/v1/core/kv_cache_utils.py` | 0/3 prep | `KVCacheBlock` QuotaServe metadata 필드 | `workload_tag`, counted flag |
 | `vllm/v1/core/kv_cache_manager.py` | 0 | collector 전달 + request threading 시작점 | `Request`를 coordinator로 전달 |
 | `vllm/v1/core/kv_cache_coordinator.py` | 0 | request threading 중간 경로 | manager로 `request` 전달 |
 | `vllm/v1/core/single_type_kv_cache_manager.py` | 0 | request threading 중간 경로 | BlockPool hook에 `request` 전달 |
 | `vllm/quota_serve/config.py` | 1 | config schema + loader | 신규 |
-| `vllm/quota_serve/quota_serve.yaml` | 1 | 기본 config | 신규 |
+| `quotaserve/static/configs/quota_serve.yaml` | 1 | sweep용 기본 config | 신규 |
 | `vllm/quota_serve/__init__.py` | 1 | 공개 심볼 re-export | 신규 |
 | `vllm/quota_serve/workload.py` | 2 | workload tag 추출 (`infer_workload`) | 신규 |
 | `vllm/quota_serve/collector.py` | 3/4 | owner attribution + occupancy counter + victim selection | 신규 |
 | `vllm/v1/core/sched/scheduler.py` | 3 | `QuotaServeCollector` wiring | 수정 |
 
 > [!IMPORTANT]
-> **Parity 보장**: (PR 0) 추가한 모든 인자는 `Optional`(기본 `None`)이고, 신규 hook은 base collector에서 no-op이다. `KVCacheBlock`에 추가한 metadata 필드는 base vLLM path에서 읽히지 않는다. 따라서 `metrics_collector`가 없거나 base 구현이면 동작이 baseline LRU와 **완전히 동일**하다(plan §5.3 mode=off parity). 기존 테스트 `tests/v1/core/test_kv_cache_metrics.py`는 collector를 `block` 단일 인자로 호출하므로 하위 호환된다. (PR 1) config 패키지 자체는 순수 데이터다. (PR 2/3) collector는 QuotaServe active일 때만 생성된다. (PR 4) victim selection은 mode=static/dynamic에서만 켜지므로(`collector.victim_selection_active`), **mode=off/dry_run이면 eviction 순서가 baseline LRU와 완전히 동일하다.**
+> **Parity 보장**: (PR 0) 추가한 모든 인자는 `Optional`(기본 `None`)이고, 신규 hook은 base collector에서 no-op이다. `KVCacheBlock`에 추가한 metadata 필드는 base vLLM path에서 읽히지 않는다. 따라서 `metrics_collector`가 없거나 base 구현이면 동작이 baseline LRU와 **완전히 동일**하다(plan §5.3 mode=off parity). 기존 테스트 `tests/v1/core/test_kv_cache_metrics.py`는 collector를 `block` 단일 인자로 호출하므로 하위 호환된다. (PR 1) config 패키지 자체는 순수 데이터다. (PR 2/3) collector는 QuotaServe active일 때만 생성된다. (PR 4) victim selection은 mode=static/dynamic에서만 켜지므로(`collector.victim_selection_active`), **mode=off이면 eviction 순서가 baseline LRU와 완전히 동일하다.**
 
 ---
 
-## 1. Hook map (5 hooks)
+## 1. Hook map (수정 hook 5개 + 관련 지점)
+
+이 문서에서는 두 종류를 구분한다.
+
+- **수정 hook**: QuotaServe를 위해 실제로 시그니처를 바꾸거나 새로 fire하도록 추가한 지점.
+- **관련 기존 지점**: 코드는 원래 있던 vLLM 구조지만, owner/occupancy/victim selection의 의미를 해석할 때 반드시 같이 봐야 하는 지점.
+
+### 1.1 실제 수정 hook
 
 | # | Hook | 종류 | fire 위치 (`block_pool.py`) | 용도 (후속 PR) |
 |---|---|---|---|---|
@@ -50,8 +57,23 @@ vLLM fork에 들어간 QuotaServe 변경을 PR 단위로 정리한다.
 | 4 | `on_block_accessed(block, request=None)` | 시그니처 확장 | `touch()` cache hit | hit-side workload (owner 불변) |
 | 5 | `on_block_freed(block, prev_ref, new_ref)` | **신규** | `free_blocks()` `ref_cnt -= 1` 직후 | ref→0 transition (counter, PR 3) |
 
+### 1.2 관련 기존 지점 (수정 hook은 아니지만 같이 추적)
+
+| 지점 | 파일 | 왜 봐야 하는가 | 수정 여부 |
+|---|---|---|---|
+| `KVCacheBlock.block_hash` / `reset_hash()` | `kv_cache_utils.py` | `block_hash is not None`이 cached prefix 여부 판단 기준이다. eviction log용 hash는 reset 전에 캡처해야 한다. | 기존 구조 + metadata 필드 추가 |
+| `KVCacheBlock` metadata | `kv_cache_utils.py` | `slots=True`라 동적 attribute를 못 붙인다. owner/count flag는 dataclass field로 있어야 한다. | 수정 |
+| `FreeKVCacheBlockQueue.popleft_n()` | `kv_cache_utils.py` | baseline LRU가 여러 block을 한 번에 뽑는 경로다. static에서는 이 경로를 그대로 쓰지 않고 block별 선택으로 우회한다. | 기존 구조 |
+| `FreeKVCacheBlockQueue.remove()` | `kv_cache_utils.py` | quota-aware selector가 고른 block을 free queue에서 제거할 때 필요하다. | 기존 구조 |
+| `BlockHashToBlockMap.insert()` | `block_pool.py` | block이 prefix cache에 등록되는 순간이다. Hook #3은 이 직후에 fire한다. | 기존 구조 |
+| `BlockHashToBlockMap.pop()` | `block_pool.py` | cached block eviction이 실제 확정되는 순간이다. Hook #2는 pop 성공 후 fire한다. | 기존 구조 |
+| `get_cached_block()` | `block_pool.py` | prefix cache hit 후보를 찾는 경로다. 실제 ref_cnt 증가는 `touch()`에서 일어난다. | 기존 구조 |
+| `evict_blocks()` | `block_pool.py` | 외부에서 block id로 prefix cache를 제거하는 경로다. 명시적 request가 없어 `trigger_request=None`으로 처리한다. | 기존 구조 |
+| `reset_prefix_cache()` | `block_pool.py` | 모든 cache hash가 사라지는 경로다. owner/count flag와 collector occupancy도 같이 초기화해야 한다. | 일부 수정 |
+| `get_new_blocks(num_blocks)` | `block_pool.py` | 새 block이 여러 개 필요할 수 있다. static path는 `select_victim → remove → evict → allocate`를 block마다 반복해야 한다. | 수정 |
+
 > [!NOTE]
-> victim 선택을 가로채는 정책 hook(`select_victim_candidate`)과 dry-run shadow policy는 **PR 0에서 제외하고 PR 4로 옮겼다**. 이유: ① PR 0 시점엔 `block.workload_id`(PR 2)·quota 정책(PR 4)이 없어 그 hook이 할 일이 없다. ② "실제로 무엇이 evict됐는지"는 Hook #2가 block 단위로 이미 기록한다. ③ victim 선택을 실제로 바꾸는 동작 변경은 PR 4에서 일어난다. (plan §4 NOTE 참조)
+> victim 선택을 가로채는 정책 경로는 **PR 0에서 제외하고 PR 4로 옮겼다**. 이유: ① PR 0 시점엔 `block.workload_tag`(PR 2)·quota 정책(PR 4)이 없어 그 hook이 할 일이 없다. ② "실제로 무엇이 evict됐는지"는 Hook #2가 block 단위로 이미 기록한다. ③ victim 선택을 실제로 바꾸는 동작 변경은 PR 4에서 일어난다. (plan §4 NOTE 참조)
 
 ---
 
@@ -128,7 +150,7 @@ Hook #5 on_block_freed     -> free_blocks()            (ref_cnt 감소)
 
 - 시그니처: `+ trigger_request: Request | None = None`
 - 실제 cache-map pop이 성공한 뒤 `block_hash`와 `victim_workload`를 보존하고, `block.reset_hash()` 이후 `on_block_evicted(block, trigger_request, evicted_block_hash=block_hash, victim_workload=victim_workload)`를 호출한다.
-- QuotaServe collector는 hook 시점의 `block.is_cached()==False` 상태로 occupancy membership을 동기화하고, 로그에는 별도 인자로 받은 pre-reset hash/owner를 사용한다.
+- QuotaServe collector는 hook 시점의 `block.block_hash is None` 상태로 occupancy membership을 동기화하고, 로그에는 별도 인자로 받은 pre-reset hash/owner를 사용한다.
 - 외부 evict 경로(`evict_blocks` → connector)는 trigger 없이 호출 → `None`
 
 ### 3.4 `cache_full_blocks()` (기존) — Hook #3
@@ -162,7 +184,7 @@ for block in blocks_list:
 ```python
 for block in self.blocks:
     block.reset_hash()
-    block.workload_id = None
+    block.workload_tag = None
     block.is_counted_as_evictable_cached = False
 ```
 
@@ -220,10 +242,10 @@ KVCacheManager.allocate_slots(request)
 | `cache_full_blocks` | block_pool | Hook #3 배선 (시그니처 불변) |
 | `allocate_new_blocks` | coordinator / single_type_manager | `+request` threading |
 | `allocate_new_computed_blocks` | coordinator / single_type_manager | `+request` threading |
-| `KVCacheBlock` | kv_cache_utils | `workload_id`, `is_counted_as_evictable_cached` 필드 추가 |
+| `KVCacheBlock` | kv_cache_utils | `workload_tag`, `is_counted_as_evictable_cached` 필드 추가 |
 
 > [!IMPORTANT]
-> **새로 만든 `def`는 hook 2개(`on_block_cached`, `on_block_freed`)뿐**이다. plan §8.2의 `scan_lru_head_until_found`/`_abs_quota`나 §7.3의 `maybe_update_evictable_count` 같은 정책 헬퍼는 **PR 3/4 소관이라 추가하지 않았다.** 다만 `KVCacheBlock`이 `slots=True`라 동적 attribute를 붙일 수 없으므로, owner/counting metadata 필드는 미리 dataclass field로 추가했다.
+> PR 0에서 새로 만든 no-op hook은 `on_block_cached`, `on_block_freed` 2개다. PR 3/4 현재 구현에서는 정책 로직이 `QuotaServeCollector._recount()`와 `QuotaServeCollector.select_victim()`에 들어가며, `KVCacheBlock`은 `slots=True`라 owner/counting metadata 필드를 dataclass field로 추가했다.
 
 ---
 
@@ -237,13 +259,13 @@ KVCacheManager.allocate_slots(request)
 
 ## 7. PR 1 — config schema 패키지 (`vllm/quota_serve/`)
 
-plan §5. QuotaServe config의 **schema + loader**를 vLLM core와 분리된 패키지로 둔다. **순수 데이터 + 로딩/검증**만 담당하고, 정책/collector/hook 호출은 없다. core 코드(scheduler 등)는 아직 건드리지 않았다 — 엔진에 연결하는 wiring은 PR 3으로 미뤘다(주입할 collector가 PR 3에서 생기므로).
+plan §5. PR 1의 대상은 `vllm/quota_serve/config.py`의 **schema + loader**다. 이 파일은 **순수 데이터 + 로딩/검증**만 담당한다. 현재 branch의 `vllm/quota_serve/` 패키지에는 PR 2~4의 `workload.py`/`collector.py`도 함께 들어간 상태지만, PR 1의 parity gate는 `mode=off`/비활성일 때 QuotaServeCollector를 만들지 않는 분기로 유지된다.
 
 ### 7.1 `config.py` — schema + loader
 
 | 심볼 | 내용 |
 |---|---|
-| `QuotaServeMode` | `Literal["off","dry_run","static","dynamic"]` |
+| `QuotaServeMode` | `Literal["off","static","dynamic"]` |
 | `WorkloadQuota` | 단일 `quota_ratio` (frozen). `__post_init__`에서 `0 ≤ quota_ratio ≤ 1` 검증 |
 | `QuotaServeConfig` | enabled / mode / tick_sec / shadow_ttl_sec / workloads / log_path. **기본값이 비활성(off)** |
 | `load_quota_serve_config(path)` | YAML 로드 + env override + 검증 |
@@ -262,7 +284,7 @@ plan §5. QuotaServe config의 **schema + loader**를 vLLM core와 분리된 패
 | `QUOTA_SERVE_CONFIG` | yaml 경로 |
 | `QUOTA_SERVE_LOG` | quota/eviction JSONL 로그 경로 |
 
-### 7.3 `quota_serve.yaml` — 기본 config
+### 7.3 `quotaserve/static/configs/quota_serve.yaml` — 기본 config
 
 §5.1 값(chat/rag/longctx/agent의 단일 `quota_ratio` + tick_sec/shadow_ttl_sec). `quota_ratio`는 **임의값 금지 → Case 1 occupancy 측정값 참고**라는 NOTE 주석 포함. `mode: "off"`가 기본이라 파일이 있어도 baseline.
 
@@ -273,7 +295,7 @@ plan §5. QuotaServe config의 **schema + loader**를 vLLM core와 분리된 패
 
 - `config.py` / `__init__.py` `py_compile` 통과.
 - loader 스모크 테스트 통과: ① yaml/env 없음 → `off`/`is_active=False`(baseline) ② yaml 로드 → `agent.quota_ratio=0.25`, unknown 정책 제외(`quota_ratio 1.0`) ③ `QUOTA_SERVE_MODE=static` → `is_active=True`, log_path 반영 ④ `quota_ratio` 범위 밖 / 잘못된 mode 거부.
-- **scheduler 미수정** — wiring(주입점 연결)과 §5.3 `mode=off` ↔ active parity test는 collector가 생기는 PR 3에서 수행한다.
+- 현재 branch에는 PR 3 wiring까지 들어간 상태다. PR 1 관점의 parity gate는 `mode=off`/비활성일 때 `QuotaServeCollector`를 만들지 않는 scheduler 분기로 유지된다.
 
 > [!NOTE]
 > PR 1에서 임시로 만들었던 `factory.py`(collector 결정 로직)는 **wiring 소관이라 제거**했다. wiring은 PR 3에서 collector와 함께 넣는다.
@@ -298,10 +320,10 @@ plan §6(PR 2)·§7(PR 3). PR 0의 hook 위에 실제 attribution/counter를 얹
 
 `QuotaServeCollector(KVCacheMetricsCollector)`. PR 0의 base observation collector를 상속해 lifecycle hook을 override한다.
 
-- **owner attribution**: `on_block_allocated`에서 `block.workload_id = infer_workload(request.request_id)`(재사용 시 overwrite). request_id 단위 memoize로 allocation 루프 반복 파싱을 피한다.
+- **owner attribution**: `on_block_allocated`에서 `block.workload_tag = infer_workload(request.request_id)`(재사용 시 overwrite). request_id 단위 memoize로 allocation 루프 반복 파싱을 피한다.
 - **occupancy counter**: `occupancy_w = count(ref_cnt==0 and cached)`를 flag(`is_counted_as_evictable_cached`) 기반 상태 전이로 유지. 갱신 경로: cache 등록(Hook #3)/hit(#4)/free(#5)/evict(#2). cached 판정은 `block.block_hash is not None`.
 - `verify_occupancy(blocks)`: `sum(occupancy_w) == 실제 ref==0 cached block 수` 검증(§5.4/§7.5, 디버그용 O(N) 스캔).
-- 단일 스레드 block pool 조작이라 lock 불필요.
+- counter와 counted flag 갱신은 `QuotaServeCollector._quota_lock` 안에서 함께 처리한다. 현재 block pool 조작이 주로 단일 경로로 흘러도, 여러 hook에서 같은 block membership을 갱신하므로 lock 기준을 유지한다.
 
 ### 8.3 wiring — `vllm/v1/core/sched/scheduler.py`
 
@@ -321,7 +343,7 @@ collector 생성부에서 `load_quota_serve_config().is_active`면 `QuotaServeCo
 
 ## 9. PR 4 — static quota victim selection
 
-plan §8. PR 3의 occupancy 위에서 victim 선택을 LRU → quota-aware로 바꾼다. **이 PR부터 mode=static/dynamic에서 eviction 동작이 baseline과 달라진다**(off/dry_run은 그대로).
+plan §8. PR 3의 occupancy 위에서 victim 선택을 LRU → quota-aware로 바꾼다. **이 PR부터 mode=static/dynamic에서 eviction 동작이 baseline과 달라진다**(off는 그대로).
 
 ### 9.1 `collector.select_victim(free_queue, trigger_request)` — 2-tier (§8.2)
 
@@ -335,7 +357,7 @@ plan §8. PR 3의 occupancy 위에서 victim 선택을 LRU → quota-aware로 �
 
 ### 9.2 `collector.bind_pool(num_gpu_blocks)`
 
-BlockPool 생성 시 호출. `quota_base_blocks`(=전체 KV block 수, §8.2 TIP)를 주입하고, mode∈{static,dynamic}이면 `victim_selection_active=True`로 켠다. dry_run/off는 False(관측만).
+BlockPool 생성 시 호출. `quota_base_blocks`(=전체 KV block 수, §8.2 TIP)를 주입하고, mode∈{static,dynamic}이면 `victim_selection_active=True`로 켠다. off는 False(관측만).
 
 ### 9.3 `block_pool.get_new_blocks` — quota path
 
@@ -343,13 +365,13 @@ BlockPool 생성 시 호출. `quota_base_blocks`(=전체 KV block 수, §8.2 TIP
 
 ### 9.4 로깅 (§8.3, §9.2)
 
-`QUOTA_SERVE_LOG`에 JSONL. startup 1회 `quota_state_init`(quota_base_blocks + workload별 quota_w), eviction마다 `eviction`(evictor/victim/selection_reason/is_cross_workload/victim_occupancy/victim_quota/occupancy_snapshot). `selection_counts`로 reason별 누적.
+`QUOTA_SERVE_LOG`에 JSONL. startup 1회 `quota_state_init`(quota_base_blocks + workload별 quota_w), eviction마다 `eviction`(evictor/victim/block_hash/selection_reason/is_cross_workload/victim_occupancy/victim_quota/occupancy_snapshot/scan_steps). `selection_counts`로 reason별 누적.
 
 ### 9.5 검증 상태
 
 - `py_compile` 통과.
 - 격리 통합 테스트(실제 `collector.py` 로드, heavy import는 stub): over-quota longctx가 LRU 순으로 evict되고 quota 안의 chat은 보호(occupancy 불변); `fallback_no_over_quota`→LRU head; `uncached_head`→free block 직접 사용; `selection_counts` 정확.
-- baseline parity: mode=off/dry_run은 `victim_selection_active=False`라 LRU 경로 그대로.
+- baseline parity: mode=off는 `victim_selection_active=False`라 LRU 경로 그대로.
 
 ---
 

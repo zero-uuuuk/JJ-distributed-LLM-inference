@@ -85,7 +85,7 @@ unknown
 ```
 
 ```text
-request.workload_tag = extract_workload_tag(request)
+workload_tag = infer_workload(request.request_id)
 ```
 
 tag 추출 실패 시 `unknown`으로 설정하며, config에 정의되지 않은 workload는 quota 정책에서 제외하고 baseline LRU와 동일하게 취급한다.
@@ -99,14 +99,14 @@ tag 추출 실패 시 `unknown`으로 설정하며, config에 정의되지 않�
 Block owner는 block이 특정 request에 할당되는 시점에 설정한다. 즉, KV block이 새 request에 allocation될 때 해당 request의 workload tag를 owner로 기록한다.
 
 ```text
-block.owner_workload = request.workload_tag
+block.workload_tag = infer_workload(request.request_id)
 ```
 
 중요한 점은 block이 eviction되거나 free 상태로 돌아간 뒤, 다른 request에 재사용될 때는 새로운 owner로 overwrite되어야 한다는 것이다.
 
 ```text
 block이 free 상태 → 새로운 request에 allocation
-→ block.owner_workload = new_request.workload_tag (overwrite)
+→ block.workload_tag = infer_workload(new_request.request_id) (overwrite)
 ```
 
 따라서 owner는 block의 lifetime 동안 고정된 값이 아니라, allocation 단위로 갱신되는 속성이다.
@@ -115,13 +115,12 @@ block이 free 상태 → 새로운 request에 allocation
 
 ```text
 block_hash
-owner_workload
+workload_tag
 ref_cnt
-is_cached_prefix
-last_access_time
+is_counted_as_evictable_cached
 ```
 
-Eviction 시점에는 해당 block의 `owner_workload`를 사용하여 victim workload를 판단한다.
+Eviction 시점에는 해당 block의 `workload_tag`를 사용하여 victim workload를 판단한다.
 
 ---
 
@@ -134,9 +133,9 @@ Static Quota에서 `occupancy_w`는 workload `w`가 현재 들고 있는 evictab
 ```text
 occupancy_w =
 count(block where
-    block.owner_workload == w
+    block.workload_tag == w
     and block.ref_cnt == 0
-    and block.is_cached_prefix == True
+    and block.block_hash is not None
 )
 ```
 
@@ -161,7 +160,7 @@ counter는 이벤트 자체가 아니라 상태 전이를 기준으로 갱신한
 ```text
 조건:
 evictable_cached 상태 =
-    (block.ref_cnt == 0 and block.is_cached_prefix == True)
+    (block.ref_cnt == 0 and block.block_hash is not None)
 ```
 
 전이 규칙:
@@ -169,12 +168,12 @@ evictable_cached 상태 =
 ```text
 False → True 전이
 → block.is_counted_as_evictable_cached == False
-→ occupancy[owner_workload] += 1
+→ occupancy[block.workload_tag] += 1
 → block.is_counted_as_evictable_cached = True
 
 True → False 전이
 → block.is_counted_as_evictable_cached == True
-→ occupancy[owner_workload] -= 1
+→ occupancy[block.workload_tag] -= 1
 → block.is_counted_as_evictable_cached = False
 ```
 
@@ -270,9 +269,13 @@ occupancy_w > quota_w 인 workload가 있음?
 pseudocode:
 
 ```python
-def select_victim(current_request):
-    if not quota_serve_config.is_active:
-        return global_lru_victim(), "baseline_lru_off_mode"
+def select_victim(free_queue, trigger_request):
+    # QuotaServe active static path.
+    # mode=off/disabled이면 이 함수 밖에서 기존 global LRU를 그대로 사용한다.
+    head = free_queue.head
+
+    if head.block_hash is None:
+        return head, "uncached_head"  # non-eviction outcome
 
     over_quota_workloads = {
         w for w in workloads
@@ -280,13 +283,13 @@ def select_victim(current_request):
     }
 
     if not over_quota_workloads:
-        return global_lru_victim(), "fallback_no_over_quota"
+        return head, "fallback_no_over_quota"
 
     for block in scan_lru_head_until_found():
         if (
             block.ref_cnt == 0
-            and block.is_cached_prefix
-            and block.owner_workload in over_quota_workloads
+            and block.block_hash is not None
+            and block.workload_tag in over_quota_workloads
         ):
             return block, "over_quota_selected"
 
@@ -306,10 +309,10 @@ def select_victim(current_request):
 Eviction이 발생할 때 다음 정보를 기록한다.
 
 ```text
-evictor_workload = current_request.workload_tag
-victim_workload = evicted_block.owner_workload
-block_hash = evicted_block.hash
-selection_reason = over_quota_selected / fallback_no_over_quota / baseline_lru_off_mode
+evictor_workload = infer_workload(trigger_request.request_id)
+victim_workload = evicted_block.workload_tag
+block_hash = evicted_block_hash
+selection_reason = over_quota_selected / fallback_no_over_quota
 ```
 
 `evictor_workload != victim_workload`이면 cross-workload eviction이다.
@@ -359,6 +362,7 @@ is_cross_workload
 victim_occupancy
 victim_quota
 occupancy_snapshot   # {workload: occupancy_w} — eviction 순간 전체 workload 스냅샷
+scan_steps
 ```
 
 ### 9.3 Summary metric
@@ -368,11 +372,12 @@ occupancy_snapshot   # {workload: occupancy_w} — eviction 순간 전체 worklo
 ```text
 over_quota_selected count
 fallback_no_over_quota count
-baseline_lru_off_mode count
+uncached_head count
 workload별 eviction count
 workload별 cross-workload eviction count
 workload별 useful eviction count
 workload별 useful eviction ratio
+scan_steps mean / p95
 ```
 
 특히 다음 두 값은 반드시 확인한다.

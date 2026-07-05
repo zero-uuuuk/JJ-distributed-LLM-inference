@@ -32,7 +32,12 @@ DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
 DEFAULT_AGENT_SLO_MS = 200.0
 DEFAULT_CHAT_SLO_MS = 400.0
-DEFAULT_MAX_OUTPUT_TOKENS = 1776
+DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
+    "chat": 691,
+    "rag": 205,
+    "longctx": 41,
+    "agent": 1776,
+}
 
 # static/run_mixed_agent_c2.py 위치 기준. 출력은 static/ 아래에 둔다.
 STATIC_DIR = Path(__file__).resolve().parent
@@ -210,12 +215,20 @@ def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+def resolve_max_token_cap(workload_tag: str) -> int | None:
+    return DEFAULT_MAX_TOKENS_BY_WORKLOAD.get(workload_tag.lower())
+
+
 def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
     row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
-    token_cap = DEFAULT_MAX_OUTPUT_TOKENS
+    token_cap = resolve_max_token_cap(workload_tag)
 
-    if row_max_tokens is None:
+    if row_max_tokens is None and token_cap is None:
         return DEFAULT_FALLBACK_MAX_TOKENS
+    if row_max_tokens is None:
+        return max(1, int(token_cap))
+    if token_cap is None:
+        return max(1, int(row_max_tokens))
     return max(1, int(min(row_max_tokens, token_cap)))
 
 
@@ -233,7 +246,7 @@ def build_payload(
     max_tokens: int,
     workload_tag: str,
 ) -> dict[str, Any]:
-    # 'user' 필드로 workload 태그 전달 — QuotaServe PR 2(user -> Request.workload_id).
+    # X-Request-Id prefix로 workload tag 전달 — QuotaServe PR 2.
     return {
         "model": model,
         "max_tokens": max_tokens,

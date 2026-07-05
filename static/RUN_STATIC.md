@@ -30,7 +30,7 @@ QuotaServe static은 **서버측 env(`QUOTA_SERVE_MODE=static`)**로만 켜진�
 ```bash
 export VLLM_DIR=~/vllm
 export JJ_ROOT=~/JJ-distributed-LLM-inference
-# QUOTA_SERVE_CONFIG 기본 = $VLLM_DIR/vllm/quota_serve/quota_serve.yaml
+# QUOTA_SERVE_CONFIG 기본 = quotaserve/static/configs/quota_serve.yaml
 ```
 
 고정 실행 기준:
@@ -38,7 +38,8 @@ export JJ_ROOT=~/JJ-distributed-LLM-inference
 ```text
 instance              = g5.xlarge
 --max-model-len       = 8192
-request max_tokens    = min(trace output_token_len, 1776)
+request max_tokens    = min(trace output_token_len, workload cap)
+workload caps         = chat 691, rag 205, longctx 41, agent 1776
 --agent-slo-ms        = 200
 ```
 

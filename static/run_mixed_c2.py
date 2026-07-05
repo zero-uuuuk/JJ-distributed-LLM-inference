@@ -36,7 +36,12 @@ DEFAULT_RAG_SLO_MS = 400.0
 DEFAULT_LONGCTX_SLO_MS = 7700.0
 DEFAULT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_FALLBACK_MAX_TOKENS = 128
-DEFAULT_MAX_OUTPUT_TOKENS = 1776
+DEFAULT_MAX_TOKENS_BY_WORKLOAD = {
+    "chat": 691,
+    "rag": 205,
+    "longctx": 41,
+    "agent": 1776,
+}
 
 # static/run_mixed_c2.py 위치 기준. 출력은 static/ 아래에 둔다.
 STATIC_DIR = Path(__file__).resolve().parent
@@ -258,14 +263,22 @@ def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
-    """요청별 output_token_len을 보존하되 전역 생성 상한 1776을 넘기지 않는다."""
-    row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
-    token_cap = DEFAULT_MAX_OUTPUT_TOKENS
+def resolve_max_token_cap(workload_tag: str) -> int | None:
+    return DEFAULT_MAX_TOKENS_BY_WORKLOAD.get(workload_tag.lower())
 
-    if row_max_tokens is None:
+
+def resolve_max_tokens(row: dict[str, Any], workload_tag: str) -> int:
+    """요청별 output_token_len을 보존하되 workload별 생성 상한을 넘기지 않는다."""
+    row_max_tokens = row.get("output_token_len", row.get("output_tokens"))
+    token_cap = resolve_max_token_cap(workload_tag)
+
+    if row_max_tokens is None and token_cap is None:
         return DEFAULT_FALLBACK_MAX_TOKENS
-    return int(min(row_max_tokens, token_cap))
+    if row_max_tokens is None:
+        return max(1, int(token_cap))
+    if token_cap is None:
+        return max(1, int(row_max_tokens))
+    return max(1, int(min(row_max_tokens, token_cap)))
 
 
 def messages_from_row(row: dict[str, Any]) -> list[dict[str, str]]:
@@ -280,9 +293,8 @@ def build_payload(row: dict[str, Any], model: str, max_tokens: int,
                   workload_tag: str = "") -> dict[str, Any]:
     """OpenAI Chat Completions 요청 페이로드를 생성한다.
 
-    vLLM 내부 eviction 계측을 위해 'user' 필드에 workload 태그를 포함한다.
-    vLLM은 이 값을 ChatCompletionRequest.user로 파싱하며, QuotaServe PR 2의
-    workload tag 전파(user -> Request.workload_id)의 입력이 된다.
+    'user' 필드는 결과 확인용 metadata로만 유지한다. QuotaServe PR 2의
+    workload tag 전파는 send_one()에서 붙이는 X-Request-Id prefix가 담당한다.
     """
     return {
         "model": model,

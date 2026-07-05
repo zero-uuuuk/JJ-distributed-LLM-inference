@@ -69,5 +69,6 @@ static/
 
 - instance: `g5.xlarge`
 - server `--max-model-len`: `8192`
-- request `max_tokens`: trace의 `output_token_len`을 쓰되 최대 `1776`
+- request `max_tokens`: `min(trace output_token_len, workload별 cap)`
+  (`chat=691`, `rag=205`, `longctx=41`, `agent=1776`)
 - `--agent-slo-ms`: `200`
