@@ -3,17 +3,18 @@
 ## 한 줄 요약
 
 > QuotaServe는 workload별 cached-prefix quota를 런타임에 조정한다.
-중심 신호는 **다른 workload에게 쫓겨난 block이 나중에 다시 필요했는가**이다.
-사전 profile은 `ratio_low/high` 기준선과 그에 대응되는 `floor/cap`을 정하고, 런타임 quota는 그 사이에서 천천히 움직인다.
+> 중심 신호는 **다른 workload에게 쫓겨난 block이 나중에 다시 필요했는가**이다.
+> 사전 profile은 `ratio_low/high` 기준선과 그에 대응되는 `floor/cap`을 정하고, 런타임 quota는 그 사이에서 천천히 움직인다.
 
-> 💡 핵심은 단순하다. **cross-workload useful eviction ratio가 높으면 quota를 늘리고, 낮으면 줄이며, 그 움직임을 profile curve에서 얻은 `floor`와 `cap` 사이에 둔다.**
+> [!IMPORTANT]
+> 핵심은 단순하다. **cross-workload useful eviction ratio가 높으면 quota를 늘리고, 낮으면 줄이며, 그 움직임을 profile curve에서 얻은 `floor`와 `cap` 사이에 둔다.**
 
 ---
 
 ## 용어
 
 | 용어 | 뜻 |
-| --- | --- |
+|---|---|
 | **cached prefix block** | running 요청이 끝나 `ref=0`이 된 prefix block. QuotaServe가 보호하거나 회수할 수 있는 대상이다. |
 | **quota** | workload `w`가 보호받는 cached prefix block 목표량. 런타임에서 조정되는 값이다. (단위: block 수) |
 | **ratio_high** | quota 부족을 판단하는 useful eviction ratio 상한. 이 값보다 높으면 quota를 늘린다. (단위: 0~1 비율) |
@@ -39,26 +40,26 @@
 QuotaServe도 같은 방식으로 접근한다. 다만 page fault 대신 prefix cache에서 관측되는 **cross-workload useful eviction ratio**를 본다.
 
 | 구분 | OS의 PFF | QuotaServe |
-| --- | --- | --- |
+|---|---|---|
 | 조절 대상 | 프로세스별 frame 수 | workload별 cached-prefix quota |
 | 관측 신호 | page fault rate | cross-workload useful eviction ratio |
 | 신호가 높을 때 | frame 부족 | 다른 workload에게 hot prefix가 밀림 |
 | 런타임 조정값 | frame 할당량 | `quota_w` |
 | 사전 산정값 | fault-rate 기준선과 frame 범위 | `ratio_low/high`, `floor_w`, `cap_w` |
 
-![figure](image.png)
+![PFF 기준선 개념](pff_graph.png)
 
 *그림 1. PFF는 page-fault rate가 상한보다 높으면 frame을 늘리고, 하한보다 낮으면 frame을 줄인다.*
 
-![figure](image.png)
+![QuotaServe 기준선 개념](quotaserve_graph.png)
 
 *그림 2. QuotaServe는 useful eviction ratio가 `ratio_high`보다 높으면 quota를 늘리고, `ratio_low`보다 낮으면 quota를 줄인다.*
 
 여기서 `ratio_low/high`는 useful eviction ratio의 기준선이고, `floor/cap`은 그 기준선에 대응되는 workload별 quota 범위다.
 
-$$
-floor_w \leq quota_w \leq cap_w
-$$
+```text
+floor_w <= quota_w <= cap_w
+```
 
 ---
 
@@ -86,7 +87,7 @@ workload `w`의 중심 신호는 `w`가 다른 workload에게 eviction 당한 �
 
 수식은 다음과 같다.
 
-```
+```text
 cross_workload_evictions_w
 = window_size개의 최근 eviction where victim = w and evictor != w
 
@@ -97,15 +98,13 @@ useful_eviction_ratio_w
 = cross_workload_shadow_hits_w / window_size
 ```
 
-![figure](image.png)
+![Eviction metric 예시](eviction_metric_example.png)
 
 *그림 3. self eviction은 workload 내부 pressure를 설명하는 보조 관측값이고, cross-workload case의 useful eviction ratio가 런타임 quota 조정 기준이 된다.*
 
-![figure](image.png)
-
 해석은 단순하다.
 
-```
+```text
 useful_eviction_ratio_w 높음
 → w의 hot prefix가 다른 workload에게 밀리고 있음
 → quota_w를 cap_w 방향으로 올림
@@ -123,7 +122,8 @@ useful_eviction_ratio_w 낮음
 
 예를 들어 `Chat ← Chat`은 Chat이 자기 block끼리 경쟁한 사건이고, `Longctx ← Longctx`는 Longctx 내부에서 대량 prefix가 서로 밀어낸 사건이다. 이 값은 profiling과 분석에서 workload의 working-set 크기, 내부 churn, cache 수요를 이해하는 데 사용한다.
 
-> 💡 self eviction은 workload 내부 pressure를 설명하는 보조 관측값이며, quota 조정의 직접 입력으로 사용하지 않는다. 런타임 quota 조정은 `evictor != victim`인 cross-workload useful eviction ratio를 기준으로 한다.
+> [!NOTE]
+> self eviction은 workload 내부 pressure를 설명하는 보조 관측값이며, quota 조정의 직접 입력으로 사용하지 않는다. 런타임 quota 조정은 `evictor != victim`인 cross-workload useful eviction ratio를 기준으로 한다.
 
 ---
 
@@ -131,14 +131,14 @@ useful_eviction_ratio_w 낮음
 
 profile 단계에서는 먼저 workload별 quota와 useful eviction ratio의 관계를 얻는다. quota 후보를 sweep하면, quota가 늘어날수록 useful eviction ratio가 낮아지는 profile curve를 관측할 수 있다. (그림 2)
 
-```
+```text
 quota 후보: 0%, 5%, 10%, 15%, ...
 관측값: cross-workload useful eviction ratio, shadow hit, cache hit, miss
 ```
 
 그 다음 여러 `ratio_low/high` 후보를 평가한다.
 
-```
+```text
 ratio 후보: (low=0.05, high=0.20), (low=0.10, high=0.30), ...
 평가값: cache hit, recomputation 감소, cross-workload useful eviction 감소, 처리량
 선택값: profile 결과가 가장 좋은 ratio_low/high
@@ -160,7 +160,7 @@ ratio 후보: (low=0.05, high=0.20), (low=0.10, high=0.30), ...
 
 profile 단계의 결과는 ratio 기준선과 workload별 quota 범위다.
 
-```
+```text
 ratio_low <= useful_eviction_ratio_w <= ratio_high
 
 Chat:    floor_chat    <= quota_chat    <= cap_chat
@@ -177,7 +177,7 @@ Agent:   floor_agent   <= quota_agent   <= cap_agent
 
 매 tick마다 최근 window의 cross-workload useful eviction ratio를 계산하고, `ratio_low/high`와 비교한다.
 
-```
+```text
 useful_eviction_ratio_w > ratio_high
 → candidate_quota_w = quota_w(now) + step
 
@@ -190,14 +190,14 @@ ratio_low <= useful_eviction_ratio_w <= ratio_high
 
 그 다음 quota 범위를 적용한다.
 
-```
+```text
 quota_w(next)
 = clamp(candidate_quota_w, floor_w, cap_w)
 ```
 
 예를 들어 `step=30`이고 현재 `quota_w=250`일 때:
 
-```
+```text
 ratio > ratio_high → quota_w(next) = 280
 ratio < ratio_low  → quota_w(next) = 220
 ratio가 기준선 안 → quota_w(next) = 250
@@ -205,17 +205,18 @@ ratio가 기준선 안 → quota_w(next) = 250
 
 마지막 clamp는 quota가 profile curve에서 얻은 범위 밖으로 나가지 않게 한다.
 
-$$
-floor_w \leq quota_w \leq cap_w
-$$
+```text
+floor_w <= quota_w <= cap_w
+```
 
-> 💡 전체 quota 합이 evictable cache pool을 넘는 경우에는 `floor`를 먼저 보장하고, 남은 공간을 ratio가 큰 workload에 우선 배분한다.
+> [!NOTE]
+> 전체 quota 합이 evictable cache pool을 넘는 경우에는 `floor`를 먼저 보장하고, 남은 공간을 ratio가 큰 workload에 우선 배분한다.
 
 ---
 
 ## 6. 한 사이클
 
-```
+```text
 1. 집계
    지난 window 동안 workload별 eviction attribution과 shadow cache hit를 모은다.
 
@@ -251,7 +252,7 @@ $$
 
 evictable cached prefix block이 부족해지면, 각 workload의 현재 occupancy와 quota를 비교한다.
 
-```
+```text
 occupancy_w > quota_w
 → w는 자기 quota보다 많이 쌓은 상태
 → w의 evictable block을 우선 후보로 둠
@@ -261,11 +262,11 @@ occupancy_w <= quota_w
 → 다른 초과 workload보다 늦게 후보가 됨
 ```
 
-![figure](image.png)
+![Eviction policy 예시](eviction_policy_diagram.png)
 
 예시는 다음과 같다.
 
-```
+```text
 Chat quota = 300, Chat occupancy = 250
 → Chat은 quota 안에 있으므로 보호 우선순위가 높다.
 
@@ -273,7 +274,8 @@ Longctx quota = 100, Longctx occupancy = 180
 → Longctx는 quota를 초과했으므로 eviction 우선 후보가 된다.
 ```
 
-> 💡 QuotaServe는 `occupancy_w > quota_w`인 workload를 우선하고, 선택된 workload 안에서는 기존 LRU로 cached prefix block을 evict한다.
+> [!NOTE]
+> QuotaServe는 `occupancy_w > quota_w`인 workload를 우선하고, 선택된 workload 안에서는 기존 LRU로 cached prefix block을 evict한다.
 
 ---
 
