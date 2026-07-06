@@ -34,8 +34,12 @@ PR0에서 하지 않는 일:
 vLLM PR0 변경 파일:
 
 ```text
+vllm/v1/core/kv_cache_metrics.py
 vllm/v1/core/block_pool.py
 vllm/v1/core/kv_cache_utils.py
+vllm/v1/core/kv_cache_manager.py
+vllm/v1/core/kv_cache_coordinator.py
+vllm/v1/core/single_type_kv_cache_manager.py
 vllm/quota_serve/__init__.py
 vllm/quota_serve/workload.py
 vllm/v1/core/sched/scheduler.py
@@ -46,7 +50,7 @@ vllm/engine/protocol.py
 vllm/entrypoints/serve/cache/api_router.py
 ```
 
-핵심은 `block_pool.py`이고, engine/protocol/router 수정은 `/flush_eviction_log` 요청을 `BlockPool`까지 전달하기 위한 경로다.
+핵심은 `block_pool.py`이고, `kv_cache_manager.py` → `kv_cache_coordinator.py` → `single_type_kv_cache_manager.py` 수정은 실제 `Request`를 `BlockPool`까지 전달하기 위한 경로다. engine/protocol/router 수정은 `/flush_eviction_log` 요청을 `BlockPool`까지 전달하기 위한 경로다.
 
 ## 3. `vllm/v1/core/kv_cache_utils.py`
 
@@ -94,7 +98,28 @@ def reset_hash(self):
 
 PR3 occupancy counter용 `is_counted_as_evictable_cached`는 PR0 범위가 아니므로 넣지 않는다.
 
-## 4. `vllm/quota_serve/workload.py`
+## 4. `vllm/v1/core/kv_cache_metrics.py`
+
+PR0 hook interface를 정의한다. base collector는 기존 residency sampling만 유지하고, 새 인자는 모두 optional이라 baseline LRU 동작을 바꾸지 않는다.
+
+시그니처를 확장한 hook:
+
+```python
+def on_block_allocated(self, block, request=None): ...
+def on_block_accessed(self, block, request=None): ...
+def on_block_evicted(self, block, trigger_request=None): ...
+```
+
+PR0에서 새로 둔 no-op hook:
+
+```python
+def on_block_cached(self, block, request=None): ...
+def on_block_freed(self, block, prev_ref_cnt, new_ref_cnt): ...
+```
+
+이 hook들은 PR0에서는 관측 지점만 제공한다. 실제 owner/occupancy policy collector는 PR1 이후 범위다.
+
+## 5. `vllm/quota_serve/workload.py`
 
 request id에서 workload tag를 추출하는 helper를 추가했다.
 
@@ -116,7 +141,7 @@ unknown / None         -> unknown
 
 PR0는 OpenAI `user` 필드를 workload 기준으로 쓰지 않는다. 실험 runner가 `X-Request-Id`에 workload prefix를 넣고, vLLM 내부에서는 `request.request_id`에서 workload를 복원한다.
 
-## 5. `vllm/quota_serve/__init__.py`
+## 6. `vllm/quota_serve/__init__.py`
 
 PR0에서는 config schema와 yaml loader를 제공하지 않는다. 패키지 export는 workload 추출 helper만 둔다.
 
@@ -128,11 +153,11 @@ __all__ = ["infer_workload"]
 
 `config.py`, `quota_serve.yaml`, `QUOTA_SERVE_CONFIG`, `QUOTA_SERVE_MODE`는 PR1 이후 범위다.
 
-## 6. `vllm/v1/core/block_pool.py`
+## 7. `vllm/v1/core/block_pool.py`
 
 PR0의 핵심 수정 파일이다.
 
-### 6.1 `VLLM_EVICTION_LOG` 파일 열기
+### 7.1 `VLLM_EVICTION_LOG` 파일 열기
 
 환경 변수로 eviction log path를 받는다.
 
@@ -146,7 +171,7 @@ _eviction_log_path = os.environ.get("VLLM_EVICTION_LOG")
 VLLM_EVICTION_LOG=/path/to/eviction.jsonl
 ```
 
-### 6.2 Pending eviction buffer
+### 7.2 Pending eviction buffer
 
 eviction 직후에는 그 block이 useful eviction인지 아직 알 수 없다. 그래서 먼저 pending buffer에 저장한다.
 
@@ -177,7 +202,7 @@ _MAX_PENDING_EVICTIONS = 200_000
 
 초과하면 가장 오래된 pending event를 `reused_later=false` 상태로 먼저 파일에 기록한다.
 
-### 6.3 Cached prefix 등록 시 metadata 기록
+### 7.3 Cached prefix 등록 시 metadata 기록
 
 `cache_full_blocks()`에서 block hash를 붙이고 cache map에 넣는 시점에 metadata를 저장한다.
 
@@ -195,7 +220,7 @@ self._complete_pending_reuse(bytes(block_hash))
 
 `_complete_pending_reuse()`는 같은 prefix hash가 pending eviction buffer에 있는지 확인한다. 있으면 그 eviction event를 useful eviction으로 판단해 `reused_later=true`로 기록한다.
 
-### 6.4 Cached block eviction 기록
+### 7.4 Cached block eviction 기록
 
 `_maybe_evict_cached_block()`에서 실제 cached block이 cache map에서 제거된 뒤 pending event를 만든다.
 
@@ -217,7 +242,7 @@ block.reset_hash()
 
 PR0는 victim selection을 바꾸지 않는다. 기존 LRU가 고른 block을 evict하고, 그 사건을 기록만 한다.
 
-### 6.5 Eviction event schema
+### 7.5 Eviction event schema
 
 `_remember_eviction_event()`가 만드는 event:
 
@@ -274,7 +299,7 @@ time_until_next_reuse
   eviction 이후 같은 prefix가 다시 cache될 때까지 걸린 시간.
 ```
 
-### 6.6 Reuse 감지
+### 7.6 Reuse 감지
 
 `_complete_pending_reuse(raw_hash_bytes)`는 새 cached block이 등록될 때 호출된다.
 
@@ -291,7 +316,7 @@ time_until_next_reuse
 
 이 방식으로 "evict하지 않았다면 나중에 cache hit이 되었을 block"을 useful eviction으로 본다.
 
-### 6.7 Flush 처리
+### 7.7 Flush 처리
 
 `flush_pending_evictions()`는 아직 재사용되지 않은 pending event를 모두 파일에 기록한다.
 
@@ -302,7 +327,7 @@ event["time_until_next_reuse"] = None
 
 실험 종료 후 서버를 끄기 전에 반드시 `/flush_eviction_log`를 호출해야 한다. 그래야 `reused_later=false` event까지 파일에 남는다.
 
-### 6.8 Touch 시간 갱신
+### 7.8 Touch 시간 갱신
 
 `touch()`에서 cached block이 hit되어 ref count가 올라갈 때 `last_access_time`을 갱신한다.
 
@@ -312,7 +337,7 @@ block.last_access_time = time.time()
 
 이 값은 eviction event의 `last_access_time`으로 기록된다.
 
-### 6.9 Prefix cache reset
+### 7.9 Prefix cache reset
 
 `reset_prefix_cache()`는 모든 block에 대해 `block.reset_hash()`만 호출한다.
 
@@ -323,11 +348,48 @@ for block in self.blocks:
 
 PR0 metadata cleanup은 `KVCacheBlock.reset_hash()` 안에 모았다. 이 부분은 `research/QuotaServe`와 맞춘 결정이다.
 
-## 7. `/flush_eviction_log` endpoint plumbing
+`reset_prefix_cache()`는 collector reset 후 pending eviction도 flush한다. prefix cache를 비울 때 아직 `reused_later=false`로 확정되지 않은 event가 파일에 남도록 하기 위해서다.
+
+```python
+if self.metrics_collector:
+    self.metrics_collector.reset()
+self.flush_pending_evictions()
+```
+
+## 8. Request threading 경로
+
+PR0 eviction attribution에서 `trigger_workload`를 기록하려면 eviction을 유발한 실제 `Request`가 `BlockPool`까지 내려와야 한다.
+
+수정한 경로:
+
+```text
+KVCacheManager.allocate_slots(request)
+-> KVCacheCoordinator.allocate_new_computed_blocks(..., request=request)
+-> SingleTypeKVCacheManager.allocate_new_computed_blocks(..., request=request)
+-> BlockPool.touch(..., request=request)
+
+KVCacheManager.allocate_slots(request)
+-> KVCacheCoordinator.allocate_new_blocks(..., request=request)
+-> SingleTypeKVCacheManager.allocate_new_blocks(..., request=request)
+-> BlockPool.get_new_blocks(..., request=request)
+-> _maybe_evict_cached_block(..., trigger_request=request)
+```
+
+포함된 파일:
+
+```text
+vllm/v1/core/kv_cache_manager.py
+vllm/v1/core/kv_cache_coordinator.py
+vllm/v1/core/single_type_kv_cache_manager.py
+```
+
+이 변경은 logging attribution만 보강한다. victim selection은 여전히 기존 LRU다.
+
+## 9. `/flush_eviction_log` endpoint plumbing
 
 pending eviction buffer를 실험 종료 시점에 파일로 확정 기록하기 위해 HTTP endpoint를 추가했다.
 
-### 7.1 `vllm/entrypoints/serve/cache/api_router.py`
+### 9.1 `vllm/entrypoints/serve/cache/api_router.py`
 
 dev mode cache router에 endpoint를 추가했다.
 
@@ -352,7 +414,7 @@ curl -X POST http://127.0.0.1:8000/flush_eviction_log
 {"num_flushed":148074}
 ```
 
-### 7.2 Engine protocol/client 경로
+### 9.2 Engine protocol/client 경로
 
 아래 파일들은 `/flush_eviction_log` 요청을 core scheduler까지 넘기기 위한 plumbing이다.
 
@@ -375,7 +437,7 @@ HTTP /flush_eviction_log
 -> BlockPool.flush_pending_evictions()
 ```
 
-## 8. `research/QuotaServe`와의 관계
+## 10. `research/QuotaServe`와의 관계
 
 PR0에서 `research/QuotaServe`와 맞춘 부분:
 
@@ -401,7 +463,7 @@ PR0에서 의도적으로 다르게 둔 부분:
    config는 PR1부터 다룬다.
 ```
 
-## 9. PR0 통과 기준
+## 11. PR0 통과 기준
 
 PR0가 통과하려면 다음이 성립해야 한다.
 

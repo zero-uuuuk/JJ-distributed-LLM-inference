@@ -2,7 +2,7 @@
 
 이 문서는 QuotaServe PR0 baseline observation 결과를 기록한다.
 
-`QUOTASERVE_STATIC_PLAN.md`는 전체 static 구현 로드맵으로 유지하고, PR0의 실제 구현/검증 기록은 `static/PR0/` 산출물에 분리해서 둔다.
+`QUOTASERVE_STATIC_PLAN.md`는 전체 static 구현 로드맵으로 유지하고, PR0의 실제 구현/검증 기록은 `static/PR0/` 산출물에 분리해 둔다.
 
 ## 1. PR0 목표
 
@@ -15,7 +15,7 @@ PR0의 목표는 실제 eviction 정책을 바꾸기 전에 vLLM prefix cache li
 2. baseline LRU eviction을 workload 단위로 분석할 수 있는 log가 남는가?
 ```
 
-PR0에서 victim selection은 바꾸지 않는다.
+PR0에서는 victim selection을 바꾸지 않는다.
 
 ```text
 victim selection: 기존 LRU 그대로
@@ -39,7 +39,7 @@ request_id prefix 기반 workload 추출
 mode=off baseline parity 검증
 ```
 
-PR0에 포함하지 않는 것:
+PR0에 포함되지 않는 것:
 
 ```text
 dry_run shadow policy
@@ -53,7 +53,7 @@ dynamic quota controller
 
 ## 3. 구현 브랜치
 
-현재는 PR0 이후 PR1~PR4도 같은 branch에 순서대로 commit을 쌓는 방식으로 진행한다.
+PR0 이후 PR1~PR4는 같은 branch에 순서대로 commit을 쌓는 방식으로 진행한다.
 
 ```text
 JJ repo:
@@ -70,6 +70,9 @@ vLLM PR0에서 수정한 핵심 파일:
 ```text
 vllm/v1/core/block_pool.py
 vllm/v1/core/kv_cache_utils.py
+vllm/v1/core/kv_cache_manager.py
+vllm/v1/core/kv_cache_coordinator.py
+vllm/v1/core/single_type_kv_cache_manager.py
 vllm/v1/core/sched/scheduler.py
 vllm/v1/engine/core.py
 vllm/v1/engine/core_client.py
@@ -86,9 +89,8 @@ vllm/quota_serve/workload.py
 2. cached block이 eviction되면 pending eviction event로 저장한다.
 3. 같은 prefix hash가 나중에 다시 cache되면 reused_later=true로 기록한다.
 4. 실험 종료 후 /flush_eviction_log를 호출하면 남은 pending event를 reused_later=false로 기록한다.
+5. allocation path에서 Request를 BlockPool까지 전달해 eviction을 유발한 trigger_workload를 기록한다.
 ```
-
-`VLLM_EVICTION_LOG`를 지정하지 않으면 eviction attribution log는 파일로 남지 않는다.
 
 ## 5. 분석 대상 파일
 
@@ -104,6 +106,7 @@ pr0_chat_agent_apc_on_len8192_summary.json
 pr0_eviction_chat_agent_apc_on_len8192.jsonl
 ```
 
+
 ## 6. PR0 실행 결과
 
 ### 6.1 Chat + Longctx
@@ -113,16 +116,9 @@ pr0_eviction_chat_agent_apc_on_len8192.jsonl
 ```text
 quota_serve_mode: off
 total requests: 2000
-success: 1003
-failed: 997
-duration: 339.4s
-```
-
-이 run은 정상 baseline으로 보기 어렵다. 실패 예시는 모두 서버 연결 실패다.
-
-```text
-ClientConnectorError:
-Cannot connect to host 127.0.0.1:8000
+success: 2000
+failed: 0
+duration: 403.7s
 ```
 
 Workload별 결과:
@@ -130,64 +126,96 @@ Workload별 결과:
 ```text
 Chat:
   total: 1000
-  success: 498
-  failed: 502
-  hit_rate_mean: 0.026
-  hit_rate_p50: 0.018
-  TTFT mean: 672.1 ms
-  TTFT p50: 507.9 ms
-  TTFT p95: 2231.9 ms
-  TTFT p99: 3742.7 ms
-  SLO attainment: 17.6%
+  success: 1000
+  failed: 0
+  hit_rate_mean: 0.082
+  hit_rate_p50: 0.032
+  TTFT mean: 498.2 ms
+  TTFT p50: 416.1 ms
+  TTFT p95: 1197.6 ms
+  TTFT p99: 2037.2 ms
+  SLO attainment: 47.9%
 
 Longctx:
   total: 1000
-  success: 505
-  failed: 495
+  success: 1000
+  failed: 0
   hit_rate_mean: 0.029
   hit_rate_p50: 0.029
-  TTFT mean: 893.1 ms
-  TTFT p50: 705.3 ms
-  TTFT p95: 2916.1 ms
-  TTFT p99: 4262.5 ms
-  SLO attainment: 50.5%
+  TTFT mean: 725.9 ms
+  TTFT p50: 662.1 ms
+  TTFT p95: 1428.8 ms
+  TTFT p99: 2030.6 ms
+  SLO attainment: 100.0%
 ```
 
-Eviction log:
+Eviction log 품질:
 
 ```text
-total eviction events: 101830
-reused_later=true: 24076
-reused_later=false: 77754
+parsed eviction events: 182328
+bad json lines: 0
 missing evicted_workload: 0
-missing trigger_workload: 101830
+missing trigger_workload: 0
+unknown evicted_workload: 0
+unknown trigger_workload: 0
+reused_later=true: 34233
+reused_later=false: 148095
 ```
 
-Evicted workload별 useful 재사용:
+최종 결과에서는 `trigger_workload`가 정상적으로 기록되었다.
+
+샘플:
+
+```json
+{
+  "evicted_workload": "chat",
+  "trigger_workload": "longctx",
+  "evicted_request_id": "chatcmpl-chat-...",
+  "trigger_request_id": "chatcmpl-longctx-...",
+  "reused_later": true
+}
+```
+
+Evicted workload별 집계:
 
 ```text
 evicted_workload=chat:
-  total eviction: 31928
-  reused_later=true: 23908
-  useful ratio: 74.9%
+  total eviction: 44192
+  reused_later=true: 33705
+  useful ratio: 76.3%
 
 evicted_workload=longctx:
-  total eviction: 69902
-  reused_later=true: 168
-  useful ratio: 0.2%
+  total eviction: 138136
+  reused_later=true: 528
+  useful ratio: 0.38%
 ```
 
-Cross-workload useful eviction:
+Eviction direction:
 
 ```text
-계산 불가
+longctx -> longctx: 103634
+chat    -> longctx: 34502
+longctx -> chat:    30118
+chat    -> chat:    14074
 ```
 
-이유:
+Useful eviction direction:
 
 ```text
-trigger_workload가 모든 eviction event에서 null이다.
-따라서 longctx -> chat, chat -> longctx 방향성을 계산할 수 없다.
+longctx -> chat:    24099
+chat    -> chat:     9606
+longctx -> longctx:   429
+chat    -> longctx:    99
+```
+
+Cross-workload eviction:
+
+```text
+self eviction events: 117708
+cross-workload eviction events: 64620
+cross-workload eviction ratio: 35.4%
+cross-workload useful eviction events: 24198
+useful ratio among cross-workload evictions: 37.4%
 ```
 
 ### 6.2 Chat + Agent
@@ -200,188 +228,159 @@ phase: chat_agent_exponential
 total requests: 2000
 success: 2000
 failed: 0
-duration: 382.7s
+duration: 386.1s
 ```
 
-Chat 결과:
+Workload별 결과:
 
 ```text
-total: 1000
-success: 1000
-failed: 0
-hit_rate_mean: 0.123
-hit_rate_p50: 0.033
-TTFT mean: 222.0 ms
-TTFT p50: 199.5 ms
-TTFT p95: 495.0 ms
-TTFT p99: 694.8 ms
-SLO attainment: 89.0%
+Chat:
+  total: 1000
+  success: 1000
+  failed: 0
+  hit_rate_mean: 0.124
+  hit_rate_p50: 0.033
+  TTFT mean: 216.5 ms
+  TTFT p50: 190.7 ms
+  TTFT p95: 491.2 ms
+  TTFT p99: 662.5 ms
+  SLO attainment: 90.3%
+
+Agent:
+  total: 1000
+  success: 1000
+  failed: 0
+  hit_rate_mean: 0.361
+  hit_rate_p50: 0.161
+  TTFT mean: 282.1 ms
+  TTFT p50: 205.2 ms
+  TTFT p95: 727.8 ms
+  TTFT p99: 1209.7 ms
+  SLO attainment: 48.6%
 ```
 
-Agent 결과:
+Eviction log 품질:
 
 ```text
-total: 1000
-success: 1000
-failed: 0
-hit_rate_mean: 0.364
-hit_rate_p50: 0.169
-TTFT mean: 267.6 ms
-TTFT p50: 208.8 ms
-TTFT p95: 703.7 ms
-TTFT p99: 986.7 ms
-SLO attainment: 48.1%
-```
-
-Eviction log:
-
-```text
-total eviction events: 96142
-reused_later=true: 67381
-reused_later=false: 28761
+parsed eviction events: 96838
+bad json lines: 0
 missing evicted_workload: 0
-missing trigger_workload: 96142
+missing trigger_workload: 0
+unknown evicted_workload: 0
+unknown trigger_workload: 0
+reused_later=true: 68061
+reused_later=false: 28777
 ```
 
-Evicted workload별 useful 재사용:
+Evicted workload별 집계:
 
 ```text
 evicted_workload=chat:
-  total eviction: 47743
-  reused_later=true: 33208
+  total eviction: 47715
+  reused_later=true: 33194
   useful ratio: 69.6%
 
 evicted_workload=agent:
-  total eviction: 48399
-  reused_later=true: 34173
-  useful ratio: 70.6%
+  total eviction: 49123
+  reused_later=true: 34867
+  useful ratio: 71.0%
 ```
 
-Cross-workload useful eviction:
+Eviction direction:
 
 ```text
-계산 불가
+agent -> agent: 34189
+chat  -> chat:  30637
+agent -> chat:  17078
+chat  -> agent: 14934
 ```
 
-이유:
+Useful eviction direction:
 
 ```text
-trigger_workload가 모든 eviction event에서 null이다.
-따라서 agent -> chat, chat -> agent 방향성을 계산할 수 없다.
+agent -> chat:
+  total eviction: 17078
+  useful eviction: 10389
+  useful ratio: 60.8%
+
+chat -> agent:
+  total eviction: 14934
+  useful eviction: 10850
+  useful ratio: 72.7%
+```
+
+Cross-workload eviction:
+
+```text
+self eviction events: 64826
+cross-workload eviction events: 32012
+cross-workload eviction ratio: 33.1%
+cross-workload useful eviction events: 21239
+useful ratio among cross-workload evictions: 66.3%
 ```
 
 ## 7. 해석
 
-이번 결과에서 확인된 것:
+최종 PR0 결과에서 확인한 것:
 
 ```text
-1. VLLM_EVICTION_LOG 파일은 생성된다.
-2. evicted_workload는 누락 없이 기록된다.
-3. reused_later=true/false flush도 동작한다.
-4. evicted_workload 기준으로 useful 재사용 여부는 계산할 수 있다.
+1. mode=off에서 request failure 없이 2000개 요청이 완료되었다.
+2. VLLM_EVICTION_LOG 파일이 정상 생성되었다.
+3. evicted_workload가 누락 없이 기록되었다.
+4. trigger_workload가 누락 없이 기록되었다.
+5. reused_later=true/false flush가 정상 동작했다.
+6. cross-workload useful eviction direction을 계산할 수 있다.
 ```
 
-하지만 PR0 통과 조건으로는 부족하다.
-
-문제 1: Chat + Longctx run이 유효하지 않다.
+중요한 관찰:
 
 ```text
-2000개 중 997개가 실패했다.
-실패 원인은 ClientConnectorError로, 실험 중 서버 연결이 끊긴 것으로 보인다.
-따라서 hit rate, TTFT, SLO를 baseline parity 판단에 사용할 수 없다.
+longctx -> chat useful eviction: 24099
+chat    -> longctx useful eviction: 99
+
+agent -> chat useful eviction: 10389
+chat  -> agent useful eviction: 10850
 ```
 
-문제 2: trigger_workload가 전부 null이다.
+즉 baseline LRU에서는 Longctx 요청이 Chat의 나중에 다시 쓰일 prefix block을 많이 밀어내고 있다. Agent mix에서는 양방향 useful eviction이 모두 크게 관측된다. 이 값들이 static quota에서 줄어드는지가 PR4의 핵심 검증 대상이다.
+
+## 8. PR0 통과 판정
+
+Chat+Longctx 및 Chat+Agent 기준 PR0 판정:
 
 ```text
-Chat+Longctx eviction log:
-  missing trigger_workload = 101830 / 101830
-
-Chat+Agent eviction log:
-  missing trigger_workload = 96142 / 96142
-```
-
-이는 현재 PR0 코드에서 allocation/eviction trigger request가 `BlockPool.get_new_blocks()`까지 실제로 내려오지 않았기 때문이다. 결과적으로 evicted workload는 알 수 있지만, 어떤 workload가 eviction을 유발했는지는 알 수 없다.
-
-## 8. PR0 통과 기준과 판정
-
-통과 기준:
-
-```text
-mode=off mixed run 성공
-request failure 없음
-eviction log 생성
-trigger_workload / evicted_workload 누락 없음
-Case 1 baseline과 hit rate, TTFT, SLO가 runtime noise 범위에서 유사
-```
-
-현재 판정:
-
-```text
-PR0 FAIL / 보완 필요
+PASS
 ```
 
 근거:
 
 ```text
-1. Chat+Longctx run에서 request failure가 997개 발생했다.
-2. 두 eviction log 모두 evicted_workload는 기록되지만 trigger_workload가 전부 null이다.
-3. cross-workload useful eviction 방향성을 계산할 수 없다.
+mode=off mixed run 성공
+request failure 없음
+eviction log 생성
+evicted_workload 누락 없음
+trigger_workload 누락 없음
+reused_later flush 정상
+cross-workload useful eviction 계산 가능
 ```
 
-## 9. 다음 조치
+이제 Chat+Longctx와 Chat+Agent 모두 PR0 baseline으로 사용할 수 있다.
 
-우선순위:
+## 9. 타임라인 메모
 
 ```text
-1. vLLM 서버가 실험 중 죽거나 재시작되지 않았는지 확인하고 Chat+Longctx를 재실행한다.
-2. trigger_request 또는 trigger workload tag가 BlockPool.get_new_blocks()까지 내려오도록 보완한다.
-3. 보완 후 eviction log에서 trigger_workload null 비율이 0%인지 확인한다.
-4. 그 다음 Chat+Longctx / Chat+Agent를 다시 실행해 PR0 baseline observation을 재판정한다.
+1. 초기 PR0/기존 branch에서는 Chat+Agent attribution이 정상 계산된 적이 있다.
+2. git history 확인 결과, PR4 commit(`2192c53a7`)에는 `request=request` 전달 경로가 구현되어 있었다.
+3. 이후 stepwise PR0 commit(`6636e27c5`)으로 PR0 범위만 남기도록 정리하는 과정에서 이 경로가 빠졌다.
+4. 그 상태로 다시 실행한 log에서는 trigger_workload가 null로 찍혔다.
+5. request threading을 다시 보완한 뒤 Chat+Longctx와 Chat+Agent에서 trigger_workload 누락 0개를 확인했다.
 ```
+다음 단계는 PR1 config/off-mode parity로 넘어가는 것이다.
 
-## 10. 코드 보완 기록
-
-이번 실패의 핵심 원인은 `Request` 객체가 `BlockPool.get_new_blocks()`까지 내려오지 않았다는 점이다.
-
-기존 흐름:
+PR1에서 확인할 것:
 
 ```text
-KVCacheManager.allocate_slots(request)
--> coordinator.allocate_new_blocks(request_id, ...)
--> single_type_manager.allocate_new_blocks(request_id, ...)
--> block_pool.get_new_blocks(num_blocks, request=None)
-```
-
-즉 위쪽에는 실제 `request`가 있었지만, 중간 경로에서 `request_id`만 전달되면서 eviction trigger 정보가 사라졌다. 그래서 eviction log에서 `evicted_workload`는 기록되지만 `trigger_workload`는 전부 `null`이 되었다.
-
-보완한 흐름:
-
-```text
-KVCacheManager.allocate_slots(request)
--> coordinator.allocate_new_blocks(request_id, ..., request=request)
--> single_type_manager.allocate_new_blocks(request_id, ..., request=request)
--> block_pool.get_new_blocks(num_blocks, request=request)
--> _maybe_evict_cached_block(block, trigger_request=request)
--> trigger_workload = infer_workload(trigger_request.request_id)
-```
-
-같이 보완한 경로:
-
-```text
-allocate_new_computed_blocks(..., request=request)
-touch(new_computed_blocks, request=request)
-external computed token allocation의 get_new_blocks(..., request=request)
-Mamba align path의 get_new_blocks(..., request=request)
-```
-
-이 보완은 victim selection을 바꾸지 않는다. 기존 LRU가 고른 block을 그대로 evict하되, 그 eviction을 유발한 request/workload를 log에 남기기 위한 PR0 attribution 보완이다.
-
-재실험에서 확인할 것:
-
-```text
-trigger_workload null 비율: 0%
-trigger_request_id null 비율: 0%
-evicted_workload null 비율: 0%
-Chat+Longctx request failure: 0
+1. PR0 logging을 유지한 상태에서 mode=off가 baseline과 동일하게 동작하는가?
+2. QuotaServe config/env loader가 victim selection을 바꾸지 않는가?
+3. 기존 PR0 지표가 유지되는가?
 ```
