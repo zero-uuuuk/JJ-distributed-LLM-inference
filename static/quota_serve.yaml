@@ -1,0 +1,118 @@
+# QuotaServe PR1 default config.
+#
+# 근거 문서:
+#   docs/QUOTASERVE_STATIC_PLAN.md §5.1 "Config 스키마"
+#
+# PR1의 목적은 QuotaServe 설정 진입점과 env override를 만들고,
+# 기본 상태(mode=off)에서 baseline LRU가 깨지지 않음을 확인하는 것이다.
+# 따라서 이 파일은 "정책을 켜는 실험값"이 아니라 "꺼진 상태의 안전한 기본값"이다.
+#
+# 실제 vLLM fork에 넣을 때의 예상 위치:
+#   vllm/quota_serve/quota_serve.yaml
+#
+# static/PR1 아래에 따로 두는 이유:
+#   JJ repo에서 PR1 산출물을 단계별로 보존하고, vLLM fork에 복사/반영할
+#   기본 config를 문서화하기 위해서다.
+
+quota_serve:
+  # enabled는 QuotaServe 설정 블록을 읽을지 여부다.
+  #
+  # PR1 기본값은 static plan의 예시를 그대로 따라 true로 둔다.
+  # 다만 아래 mode가 "off"이므로 victim selection, occupancy counter,
+  # quota policy는 절대 활성화되지 않아야 한다.
+  #
+  # loader 쪽의 최종 활성 조건은 다음처럼 해석한다.
+  #   is_active = enabled and mode != "off"
+  enabled: true
+
+  # mode는 QuotaServe 정책 단계의 최상위 스위치다.
+  #
+  # off:
+  #   baseline LRU와 동일하게 동작해야 하는 PR1 기본 모드.
+  #   config loader와 env override가 들어가도 eviction 순서가 바뀌면 안 된다.
+  #
+  # static:
+  #   PR4에서 사용할 고정 quota 모드.
+  #   workload별 quota_ratio를 quota_base_blocks에 곱해 quota_w를 만들고,
+  #   occupancy_w > quota_w인 workload 안에서 LRU victim을 고른다.
+  #
+  # dynamic:
+  #   PR7에서 사용할 feedback 모드.
+  #   PR1에서는 값만 허용하고 실제 controller는 구현하지 않는다.
+  mode: "off"
+
+  # tick_sec는 dynamic controller가 quota 조정을 시도하는 주기다.
+  #
+  # static에서는 quota_w가 실행 중 변하지 않으므로 사용하지 않는다.
+  # 그래도 PR1 config schema가 이후 PR7까지 자연스럽게 이어지도록
+  # static plan의 기본값 30초를 남겨 둔다.
+  tick_sec: 30
+
+  # shadow_ttl_sec는 PR5의 runtime shadow cache 신호에서 쓴다.
+  #
+  # eviction된 prefix block이 나중에 다시 필요해졌는지 추적할 때,
+  # pending shadow entry를 얼마나 오래 유지할지 정하는 TTL이다.
+  # PR1/PR4 static victim selection에는 직접 쓰이지 않는다.
+  shadow_ttl_sec: 120
+
+  # workload별 quota_ratio.
+  #
+  # quota_ratio는 전체 KV cache block 수로 둔 quota_base_blocks 대비
+  # 해당 workload가 보호받을 목표 cached-prefix quota 비율이다.
+  #
+  # 절대 quota는 PR4에서 다음 식으로 계산한다.
+  #   quota_w = int(quota_ratio_w * quota_base_blocks)
+  #
+  # 초기 구현에서 quota_base_blocks는 전체 KV cache block 수로 둔다.
+  # 실제 제어 대상은 ref_cnt=0인 evictable cached prefix block이므로,
+  # 같은 quota_ratio라도 모델/메모리/workload mix에 따라 의미가 달라진다.
+  # 따라서 PR4 이후 startup log에는 quota_base_blocks와 workload별 quota_w를
+  # 반드시 함께 남겨야 한다.
+  #
+  # 주의:
+  #   이 값들은 static plan §5.1의 초기값이다.
+  #   순수 임의값으로 바꾸지 말고, Case 1 cached occupancy와 PR4 static sweep
+  #   결과를 근거로 조정한다.
+  workloads:
+    # Chat은 ShareGPT multi-turn victim workload다.
+    # think-gap 이후 같은 prefix가 다시 필요해질 수 있으므로,
+    # static quota에서 우선 보호 효과를 확인할 핵심 대상이다.
+    chat:
+      quota_ratio: 0.30
+
+    # RAG는 MS MARCO 기반 retrieval prompt workload다.
+    # 현재 static 주요 검증은 Chat+Longctx / Chat+Agent가 중심이지만,
+    # PR1 schema는 Case 1에서 쓴 workload tag 전체를 받아야 하므로 둔다.
+    rag:
+      quota_ratio: 0.08
+
+    # Longctx는 HotpotQA distractor 기반 cold antagonist workload다.
+    # prompt가 길고 Chat hot prefix를 밀어낼 수 있으므로,
+    # Chat+Longctx static 검증에서 chat <- longctx useful eviction 감소를 본다.
+    longctx:
+      quota_ratio: 0.10
+
+    # Agent는 TerminalBench trajectory 기반 warm antagonist workload다.
+    # tool-gap 이후 self-reuse도 있으므로, Chat 보호와 Agent self-reuse 보존의
+    # 균형을 static sweep에서 함께 확인해야 한다.
+    agent:
+      quota_ratio: 0.25
+
+  # PR1에서 의도적으로 넣지 않는 값:
+  #
+  # ratio_low / ratio_high:
+  #   dynamic controller의 useful eviction ratio 기준선이다.
+  #   static sweep(PR4~PR6) 결과에서 profile curve를 보고 정한다.
+  #
+  # floor / cap:
+  #   dynamic에서 quota_w를 움직일 때 사용할 workload별 하한/상한이다.
+  #   static config에는 두지 않는다.
+  #
+  # step / window_size:
+  #   dynamic quota 조정 폭과 useful eviction ratio 집계 window다.
+  #   PR1 static 기본 config 범위가 아니다.
+  #
+  # log_path:
+  #   static plan §5.2 기준으로 로그 경로는 QUOTA_SERVE_LOG env var로 override한다.
+  #   파일에 고정 경로를 박으면 EC2/JJ repo/vLLM fork 위치 차이로 실험 재현성이
+  #   떨어질 수 있으므로 기본 config에는 넣지 않는다.

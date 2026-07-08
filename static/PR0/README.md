@@ -1,10 +1,13 @@
-# PR0 APC ON Baseline Run
+﻿# PR0 APC ON Baseline Run
 
 PR0에서는 static quota를 켜지 않고, `quota_mode=off` 상태에서 APC ON baseline과 eviction log가 정상적으로 남는지 확인한다.
 
 Smoke test는 실행하지 않는다. 같은 trace로 smoke를 먼저 돌리면 prefix cache가 데워져 본 실험의 초반 cache hit이 오염될 수 있다.
 
 ## 1. 공통 준비
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference
@@ -15,9 +18,14 @@ mkdir -p static/raw_results
 mkdir -p static/eviction_logs
 ```
 
+</details>
+
 ## 2. Workload 생성
 
 Chat workload가 이미 있으면 생략한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/sharegpt
@@ -32,7 +40,12 @@ python build_sharegpt_workload.py \
   --max-output-tokens 691
 ```
 
+</details>
+
 Longctx workload:
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/hotpotqa
@@ -46,7 +59,12 @@ python build_hotpotqa_workload.py \
   --max-output-tokens 41
 ```
 
+</details>
+
 Agent workload가 필요하면 생성한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference/workloads/traj
@@ -64,15 +82,25 @@ python build_traj_agent_workload.py \
   --max-output-tokens 1776
 ```
 
+</details>
+
+<details>
+<summary>실행 스크립트 보기</summary>
+
 ```bash
 wc -l traj_agent_100session_10step.jsonl
 ```
+
+</details>
 
 정상이라면 `1000`줄이 나온다.
 
 ## 3. Chat + Longctx 서버 실행
 
 서버 터미널에서 실행한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/vllm
@@ -90,17 +118,27 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --port 8000
 ```
 
+</details>
+
 ## 4. 서버 확인
 
 새 터미널에서 실행한다. `/v1/models` 확인은 prefix cache를 데우지 않는다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 curl http://127.0.0.1:8000/v1/models
 ```
 
+</details>
+
 ## 5. Chat + Longctx 본 실행
 
 클라이언트 터미널에서 실행한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference
@@ -122,19 +160,31 @@ python static/run_mixed_c2.py \
   --output static/raw_results/pr0_chat_longctx_apc_on_len8192.jsonl
 ```
 
+</details>
+
 ## 6. Chat + Longctx eviction log flush
 
 본 실행이 끝난 뒤 vLLM 서버가 살아있는 상태에서 실행한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 curl -X POST http://127.0.0.1:8000/flush_eviction_log
 ```
 
+</details>
+
 `num_flushed`가 0보다 크면 pending eviction event가 파일로 기록된 것이다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 grep '"reused_later": false' /home/ubuntu/JJ-distributed-LLM-inference/static/eviction_logs/pr0_eviction_chat_longctx_apc_on_len8192.jsonl | head
 ```
+
+</details>
 
 ## 7. Chat + Longctx 산출물
 
@@ -152,6 +202,9 @@ Chat+Longctx 실험이 끝난 뒤 vLLM 서버를 `Ctrl+C`로 종료하고 새로
 
 서버 터미널에서 실행한다.
 
+<details>
+<summary>실행 스크립트 보기</summary>
+
 ```bash
 cd /home/ubuntu/vllm
 source /home/ubuntu/vllm/.venv/bin/activate
@@ -168,15 +221,25 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --port 8000
 ```
 
+</details>
+
 새 터미널에서 서버를 확인한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 curl http://127.0.0.1:8000/v1/models
 ```
 
+</details>
+
 ## 9. Chat + Agent 본 실행
 
 클라이언트 터미널에서 실행한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 cd /home/ubuntu/JJ-distributed-LLM-inference
@@ -200,17 +263,29 @@ python static/run_mixed_agent_c2.py \
   --output static/raw_results/pr0_chat_agent_apc_on_len8192.jsonl
 ```
 
+</details>
+
 ## 10. Chat + Agent eviction log flush
 
 본 실행이 끝난 뒤 vLLM 서버가 살아있는 상태에서 실행한다.
+
+<details>
+<summary>실행 스크립트 보기</summary>
 
 ```bash
 curl -X POST http://127.0.0.1:8000/flush_eviction_log
 ```
 
+</details>
+
+<details>
+<summary>실행 스크립트 보기</summary>
+
 ```bash
 grep '"reused_later": false' /home/ubuntu/JJ-distributed-LLM-inference/static/eviction_logs/pr0_eviction_chat_agent_apc_on_len8192.jsonl | head
 ```
+
+</details>
 
 ## 11. Chat + Agent 산출물
 
