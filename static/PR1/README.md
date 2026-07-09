@@ -20,7 +20,7 @@ PR1에서는 workload 본 실행을 하지 않는다. 아직 scheduler/collector
 
 ```bash
 export VLLM_DIR=/home/ubuntu/vllm
-export JJ_ROOT=/home/ubuntu/JJ-distributed-LLM-inference
+export JJ_ROOT=/home/ubuntu/JJ-Distributed-LLM-Inference
 
 cd $VLLM_DIR
 source $VLLM_DIR/.venv/bin/activate
@@ -133,7 +133,7 @@ from pathlib import Path
 
 from vllm.quota_serve.config import load_quota_serve_config
 
-path = Path("/home/ubuntu/JJ-distributed-LLM-inference/static/quota_serve.yaml")
+path = Path("/home/ubuntu/JJ-Distributed-LLM-Inference/static/quota_serve.yaml")
 cfg = load_quota_serve_config(path)
 
 assert cfg.enabled is True
