@@ -159,7 +159,7 @@ cd $VLLM_DIR
 source $VLLM_DIR/.venv/bin/activate
 
 VLLM_SERVER_DEV_MODE=1 \
-VLLM_EVICTION_LOG=$JJ_ROOT/static/PR2/pr2_eviction_smoke_chat_longctx.jsonl \
+VLLM_EVICTION_LOG=$JJ_ROOT/static/PR2/pr2_eviction_chat_longctx_apc_on_len8192.jsonl \
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
@@ -183,7 +183,7 @@ curl http://127.0.0.1:8000/v1/models
 
 </details>
 
-## 7. Chat+Longctx smoke 실행
+## 7. Chat+Longctx 실행
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -198,54 +198,19 @@ python static/run_mixed_c2.py \
   --chat-trace workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 1.0 \
-  --longctx-qps 1.0 \
-  --max-concurrency 2 \
-  --num-chat-prompts 5 \
-  --num-longctx-prompts 5 \
-  --output static/PR2/pr2_smoke_chat_longctx.jsonl
+  --chat-qps 5.0 \
+  --longctx-qps 5.0 \
+  --max-concurrency 32 \
+  --num-chat-prompts 1000 \
+  --num-longctx-prompts 1000 \
+  --chat-slo-ms 400 \
+  --longctx-slo-ms 7700 \
+  --output static/raw_results/pr2_chat_longctx_apc_on_len8192.jsonl
 ```
 
 </details>
 
-## 8. raw result request_id 확인
-
-<details>
-<summary>실행 스크립트 보기</summary>
-
-```bash
-cd $JJ_ROOT
-
-python - <<'PY'
-import json
-from collections import Counter
-from pathlib import Path
-
-path = Path("static/PR2/pr2_smoke_chat_longctx.jsonl")
-counts = Counter()
-
-with path.open("r", encoding="utf-8") as f:
-    for line in f:
-        row = json.loads(line)
-        request_id = row.get("request_id") or ""
-        if "chat" in request_id:
-            counts["chat"] += 1
-        elif "longctx" in request_id:
-            counts["longctx"] += 1
-        else:
-            counts["unknown"] += 1
-
-print(counts)
-assert counts["chat"] == 5
-assert counts["longctx"] == 5
-assert counts["unknown"] == 0
-print("raw request_id prefix: PASS")
-PY
-```
-
-</details>
-
-## 9. eviction log flush
+## 8. eviction log flush
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -256,7 +221,7 @@ curl -X POST http://127.0.0.1:8000/flush_eviction_log
 
 </details>
 
-## 10. eviction log workload 확인
+## 9. eviction log workload 확인
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -269,10 +234,10 @@ import json
 from collections import Counter
 from pathlib import Path
 
-path = Path("static/PR2/pr2_eviction_smoke_chat_longctx.jsonl")
+path = Path("static/PR2/pr2_eviction_chat_longctx_apc_on_len8192.jsonl")
 
 if not path.exists() or path.stat().st_size == 0:
-    print("eviction log is empty: smoke load did not trigger eviction")
+    print("eviction log is empty: run did not trigger eviction")
     raise SystemExit(0)
 
 counts = Counter()
@@ -300,7 +265,7 @@ PY
 
 </details>
 
-## 11. Chat+Longctx 서버 종료
+## 10. Chat+Longctx 서버 종료
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -311,7 +276,7 @@ PY
 
 </details>
 
-## 12. vLLM 서버 재실행: Chat+Agent
+## 11. vLLM 서버 재실행: Chat+Agent
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -321,7 +286,7 @@ cd $VLLM_DIR
 source $VLLM_DIR/.venv/bin/activate
 
 VLLM_SERVER_DEV_MODE=1 \
-VLLM_EVICTION_LOG=$JJ_ROOT/static/PR2/pr2_eviction_smoke_chat_agent.jsonl \
+VLLM_EVICTION_LOG=$JJ_ROOT/static/PR2/pr2_eviction_chat_agent_apc_on_len8192.jsonl \
 vllm serve meta-llama/Llama-3.2-3B-Instruct \
   --enable-prefix-caching \
   --enable-prompt-tokens-details \
@@ -334,7 +299,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 
 </details>
 
-## 13. 서버 확인
+## 12. 서버 확인
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -345,7 +310,7 @@ curl http://127.0.0.1:8000/v1/models
 
 </details>
 
-## 14. Chat+Agent smoke 실행
+## 13. Chat+Agent 실행
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -360,56 +325,24 @@ python static/run_mixed_agent_c2.py \
   --chat-trace workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl \
   --url http://127.0.0.1:8000/v1/chat/completions \
   --model meta-llama/Llama-3.2-3B-Instruct \
-  --chat-qps 1.0 \
-  --agent-target-rps 1.0 \
-  --max-concurrency 2 \
-  --num-chat-prompts 5 \
-  --num-agent-prompts 5 \
+  --phase chat_agent_exponential \
+  --chat-qps 5.0 \
+  --agent-target-rps 5.0 \
+  --agent-steps-per-session 10 \
+  --agent-tool-gap-mode exponential \
+  --agent-tool-gap-mean 2 \
+  --agent-tool-gap-max 20 \
+  --max-concurrency 32 \
+  --num-chat-prompts 1000 \
+  --num-agent-prompts 1000 \
   --chat-slo-ms 400 \
   --agent-slo-ms 200 \
-  --output static/PR2/pr2_smoke_chat_agent.jsonl
+  --output static/raw_results/pr2_chat_agent_apc_on_len8192.jsonl
 ```
 
 </details>
 
-## 15. Chat+Agent raw result request_id 확인
-
-<details>
-<summary>실행 스크립트 보기</summary>
-
-```bash
-cd $JJ_ROOT
-
-python - <<'PY'
-import json
-from collections import Counter
-from pathlib import Path
-
-path = Path("static/PR2/pr2_smoke_chat_agent.jsonl")
-counts = Counter()
-
-with path.open("r", encoding="utf-8") as f:
-    for line in f:
-        row = json.loads(line)
-        request_id = row.get("request_id") or ""
-        if "chat" in request_id:
-            counts["chat"] += 1
-        elif "agent" in request_id:
-            counts["agent"] += 1
-        else:
-            counts["unknown"] += 1
-
-print(counts)
-assert counts["chat"] == 5
-assert counts["agent"] == 5
-assert counts["unknown"] == 0
-print("raw request_id prefix: PASS")
-PY
-```
-
-</details>
-
-## 16. Chat+Agent eviction log flush
+## 14. Chat+Agent eviction log flush
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -420,7 +353,7 @@ curl -X POST http://127.0.0.1:8000/flush_eviction_log
 
 </details>
 
-## 17. Chat+Agent eviction log workload 확인
+## 15. Chat+Agent eviction log workload 확인
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -433,10 +366,10 @@ import json
 from collections import Counter
 from pathlib import Path
 
-path = Path("static/PR2/pr2_eviction_smoke_chat_agent.jsonl")
+path = Path("static/PR2/pr2_eviction_chat_agent_apc_on_len8192.jsonl")
 
 if not path.exists() or path.stat().st_size == 0:
-    print("eviction log is empty: smoke load did not trigger eviction")
+    print("eviction log is empty: run did not trigger eviction")
     raise SystemExit(0)
 
 counts = Counter()
