@@ -225,7 +225,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 서버 시작 로그에서 다음과 같이 config가 active 상태로 로드되었는지 확인한다.
 
 ```text
-QuotaServe: enabled=True mode=static active=True
+QuotaServe config: enabled=True mode=static active=True workloads=['agent', 'chat', 'longctx', 'rag']
 ```
 
 ## 6. 서버 확인
