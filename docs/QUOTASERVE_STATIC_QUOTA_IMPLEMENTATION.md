@@ -359,7 +359,13 @@ is_cross_workload
 victim_occupancy
 victim_quota
 occupancy_snapshot   # {workload: occupancy_w} — eviction 순간 전체 workload 스냅샷
+scan_steps           # LRU head부터 selector가 확인한 block 수
 ```
+
+일반적인 allocation eviction에서는 `selection_reason`이
+`over_quota_selected`, `fallback_no_over_quota`, 또는
+`baseline_lru_off_mode` 중 하나가 된다. Selector를 거치지 않는 외부
+eviction 경로는 `external_eviction`으로 기록한다.
 
 ### 9.3 Summary metric
 

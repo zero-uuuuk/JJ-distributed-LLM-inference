@@ -141,40 +141,62 @@ external_eviction    : selector를 거치지 않은 외부 eviction
 ### Chat + Longctx
 
 ```text
-실행 결과 파일:
-요약 파일:
-Eviction log:
+실행 결과 파일: pr4_chat_longctx_static.jsonl
+비교 baseline: static/PR0/raw_results_backup/pr0_chat_longctx_apc_on_len8192.jsonl
+Eviction log: pr4_eviction_chat_longctx_static.jsonl
 
 결과:
-- 성공/실패:
-- Chat hit rate:
-- Chat TTFT p95:
-- Chat SLO attainment:
-- Longctx SLO attainment:
-- over_quota_selected 비율:
-- fallback_no_over_quota 비율:
-- scan_steps 평균/p95:
-- useful eviction 결과:
+- 성공/실패: 2000/0
+- Chat hit rate: PR0 8.21% → PR4 13.48% (+5.28%p)
+- Chat TTFT p95: PR0 1197.6ms → PR4 1200.8ms (거의 동일)
+- Chat SLO attainment: PR0 47.9% → PR4 48.4%
+- Longctx hit rate: PR0 2.90% → PR4 2.88% (거의 동일)
+- Longctx SLO attainment: PR0 100% → PR4 100%
+- 총 eviction: PR0 182,328건 → PR4 181,099건
+- cross-workload eviction: PR0 64,620건 → PR4 61,067건
+- longctx → chat eviction: 30,118건 → 28,375건
+- longctx → chat useful eviction: 24,099건 → 22,346건
+- 전체 useful eviction ratio: 18.78% → 18.22%
+- over_quota_selected: 159,142건 (87.87%)
+- fallback_no_over_quota: 21,957건 (12.13%)
+- scan_steps 평균/p95: 604.29 / 1137
+- quota: chat=1227, longctx=409
+- `occupancy > quota` 위반 기록: 0건
 ```
+
+Chat hit rate가 증가했고 Longctx SLO는 유지되었다. 또한 longctx가 Chat block을
+evict한 건수도 감소했다. 다만 전체 useful eviction ratio는 baseline보다
+높아지지 않았으므로, eviction 품질 개선까지 단정하지는 않는다.
 
 ### Chat + Agent
 
 ```text
-실행 결과 파일:
-요약 파일:
-Eviction log:
+실행 결과 파일: pr4_chat_agent_static.jsonl
+비교 baseline: static/PR0/raw_results_backup/pr0_chat_agent_apc_on_len8192.jsonl
+요약 파일: pr4_chat_agent_static_summary.json
+Eviction log: pr4_eviction_chat_agent_static.jsonl
 
 결과:
-- 성공/실패:
-- Chat hit rate:
-- Chat TTFT p95:
-- Chat SLO attainment:
-- Agent SLO attainment:
-- over_quota_selected 비율:
-- fallback_no_over_quota 비율:
-- scan_steps 평균/p95:
-- useful eviction 결과:
+- 성공/실패: 2000/0
+- Chat hit rate: PR0 12.40% → PR4 12.30% (-0.10%p)
+- Chat TTFT p95: PR0 491.2ms → PR4 535.6ms
+- Chat SLO attainment: PR0 90.3% → PR4 88.4%
+- Agent hit rate: PR0 36.14% → PR4 32.59%
+- Agent SLO attainment: PR0 48.6% → PR4 44.4%
+- 총 eviction: PR0 96,838건 → PR4 99,603건
+- cross-workload eviction: 33.06% → 31.60%
+- 전체 useful eviction ratio: 70.28% → 71.14%
+- over_quota_selected: 46,767건
+- fallback_no_over_quota: 52,836건
+- quota: chat=1227, agent=1022
+- `occupancy > quota` 위반 기록: 0건
 ```
+
+Chat+Agent에서도 selector와 quota metadata는 정상적으로 동작했다. 다만 이번
+실험에서는 PR0 대비 Chat/Agent 성능 개선이 확인되지 않았다. 이 결과는
+구현 실패가 아니라 workload별 quota 비율을 추가로 조정해야 할 가능성을
+보여준다.
+
 
 ## 7. 결론
 
@@ -185,6 +207,15 @@ PR4의 1차 결론은 다음 질문에 답하는 것이다.
 global LRU보다 Chat prefix pollution을 줄일 수 있는가?
 ```
 
-static 결과에서 quota selection이 실제로 관측되고 Chat hit rate 또는 useful
-eviction 지표가 개선되는지 확인한 뒤, 다음 단계에서 quota sweep과 dynamic
-controller를 검토한다.
+PR4 기능 검증은 통과했다. `mode=static`에서 selector가 실제로 호출되었고,
+`over_quota_selected`, `fallback_no_over_quota`, `victim_quota`,
+`occupancy_snapshot`, `scan_steps`가 기록되었다. over-quota workload가 있는데
+후보를 찾지 못한 오류도 없었다.
+
+특히 Chat+Longctx에서는 Chat hit rate가 개선되고 Longctx SLO가 유지되어
+Chat 보호 효과를 확인했다. 다만 useful eviction ratio가 개선된 것은 아니므로
+quota 비율이 최적이라고 결론내리지는 않는다. Chat+Agent는 selector 동작은
+확인했지만 성능 개선은 확인하지 못했다.
+
+quota sweep은 PR4 구현 검증의 일부가 아니라 후속 profile 실험이다. sweep 결과는
+이후 dynamic 단계의 `ratio_low/high`, `floor/cap` 후보를 정하는 데 사용한다.
