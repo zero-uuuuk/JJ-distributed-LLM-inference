@@ -17,15 +17,74 @@ mkdir -p $JJ_ROOT/static/PR5
 
 </details>
 
-워크로드는 PR2에서 생성한 파일을 그대로 사용한다.
+## 2. Workload 생성
 
-```text
-$JJ_ROOT/workloads/sharegpt/sharegpt_victim_100conv_10turn.jsonl
-$JJ_ROOT/workloads/hotpotqa/hotpotqa_longctx_2000_4000.jsonl
-$JJ_ROOT/workloads/traj/traj_agent_100session_10step.jsonl
+### Chat
+
+<details>
+<summary>실행 스크립트 보기</summary>
+
+```bash
+cd $JJ_ROOT/workloads/sharegpt
+source $JJ_ROOT/.venv/bin/activate
+
+python build_sharegpt_workload.py \
+  --num-conversations 100 \
+  --min-turns 10 \
+  --max-turns 10 \
+  --order turn-major \
+  --output sharegpt_victim_100conv_10turn.jsonl \
+  --tokenizer meta-llama/Llama-3.2-3B-Instruct \
+  --max-output-tokens 691
 ```
 
-## 2. PR5-5 단위 테스트
+</details>
+
+### Longctx
+
+<details>
+<summary>실행 스크립트 보기</summary>
+
+```bash
+cd $JJ_ROOT/workloads/hotpotqa
+source $JJ_ROOT/.venv/bin/activate
+
+python build_hotpotqa_workload.py \
+  --output hotpotqa_longctx_2000_4000.jsonl \
+  --num-requests 1000 \
+  --min-prompt-tokens 2000 \
+  --max-prompt-tokens 4000 \
+  --tokenizer meta-llama/Llama-3.2-3B-Instruct \
+  --max-output-tokens 41
+```
+
+</details>
+
+### Agent
+
+<details>
+<summary>실행 스크립트 보기</summary>
+
+```bash
+cd $JJ_ROOT/workloads/traj
+source $JJ_ROOT/.venv/bin/activate
+
+python build_traj_agent_workload.py \
+  --dataset-id yoonholee/terminalbench-trajectories \
+  --config default \
+  --split train \
+  --num-sessions 100 \
+  --max-steps 10 \
+  --min-steps 10 \
+  --max-prompt-chars 24000 \
+  --output traj_agent_100session_10step.jsonl \
+  --tokenizer meta-llama/Llama-3.2-3B-Instruct \
+  --max-output-tokens 1776
+```
+
+</details>
+
+## 3. PR5-5 단위 테스트
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -39,7 +98,7 @@ python -m pytest tests/v1/core/test_quota_serve_pr5_contract.py -q
 
 </details>
 
-## 3. Baseline 서버 실행: `mode=off`
+## 4. Baseline 서버 실행: `mode=off`
 
 이전 서버를 종료한 뒤 실행한다.
 
@@ -66,7 +125,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 
 </details>
 
-## 4. Baseline Chat+Longctx 실행
+## 5. Baseline Chat+Longctx 실행
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -93,7 +152,7 @@ python static/run_mixed_c2.py \
 
 </details>
 
-## 5. Baseline eviction log flush
+## 6. Baseline eviction log flush
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -106,7 +165,7 @@ curl -X POST http://127.0.0.1:8000/flush_eviction_log
 
 서버 터미널에서 `Ctrl+C`로 종료한다.
 
-## 6. Static 서버 실행: signal log ON
+## 7. Static 서버 실행: signal log ON
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -138,7 +197,7 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
 QuotaServe config loaded ... mode=static ... active=True
 ```
 
-## 7. Static Chat+Longctx 실행
+## 8. Static Chat+Longctx 실행
 
 <details>
 <summary>실행 스크립트 보기</summary>
@@ -165,7 +224,7 @@ python static/run_mixed_c2.py \
 
 </details>
 
-## 8. Static log flush와 signal 확인
+## 9. Static log flush와 signal 확인
 
 실험이 끝난 뒤 서버가 살아 있는 상태에서 실행한다.
 
@@ -181,7 +240,7 @@ grep '"type":"useful_eviction_signal"' \
 
 </details>
 
-## 9. Static Chat+Agent 실행
+## 10. Static Chat+Agent 실행
 
 Chat+Longctx 서버를 종료하고 같은 방식으로 서버를 재실행하되 로그 파일만
 Agent용으로 바꾼다.
@@ -240,7 +299,7 @@ python static/run_mixed_agent_c2.py \
 
 </details>
 
-## 10. Chat+Agent signal flush와 확인
+## 11. Chat+Agent signal flush와 확인
 
 <details>
 <summary>실행 스크립트 보기</summary>
