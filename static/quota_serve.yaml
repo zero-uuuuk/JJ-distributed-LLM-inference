@@ -55,6 +55,9 @@ quota_serve:
   # PR1/PR4 static victim selection에는 직접 쓰이지 않는다.
   shadow_ttl_sec: 120
 
+  # PR5 useful eviction ratio를 계산할 최근 cross-workload eviction 수다.
+  window_size: 1000
+
   # workload별 quota_ratio.
   #
   # quota_ratio는 전체 KV cache block 수로 둔 quota_base_blocks 대비
@@ -108,9 +111,8 @@ quota_serve:
   #   dynamic에서 quota_w를 움직일 때 사용할 workload별 하한/상한이다.
   #   static config에는 두지 않는다.
   #
-  # step / window_size:
-  #   dynamic quota 조정 폭과 useful eviction ratio 집계 window다.
-  #   PR1 static 기본 config 범위가 아니다.
+  # step:
+  #   dynamic quota 조정 폭이다. PR7에서 추가한다.
   #
   # log_path:
   #   static plan §5.2 기준으로 로그 경로는 QUOTA_SERVE_LOG env var로 override한다.
