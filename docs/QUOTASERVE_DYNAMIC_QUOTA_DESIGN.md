@@ -210,7 +210,8 @@ floor_w <= quota_w <= cap_w
 ```
 
 > [!NOTE]
-> 전체 quota 합이 evictable cache pool을 넘는 경우에는 `floor`를 먼저 보장하고, 남은 공간을 ratio가 큰 workload에 우선 배분한다.
+> 전체 quota ratio 합이 1을 넘는 경우에는, 각 workload의 ratio를 전체 합으로 나누어 정규화한다.
+> 예를 들어 chat=0.8, longctx=0.7이면 scale=1.5가 되고, chat quota는 0.8 / 1.5, longctx quota는 0.7 / 1.5 기준으로 계산된다.
 
 ---
 

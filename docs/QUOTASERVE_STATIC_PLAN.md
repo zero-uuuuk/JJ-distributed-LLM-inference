@@ -448,7 +448,7 @@ quota_w = clamp(candidate, floor_w, cap_w)
 ```
 
 - eviction policy는 static과 동일: `occupancy_w > quota_w`인 workload를 우선 후보로, 그 안에서 LRU
-- 전체 quota 합이 evictable pool을 넘으면 floor를 먼저 보장하고 남은 공간을 ratio가 큰 workload에 배분
+- 전체 quota ratio 합이 1을 넘으면 각 workload의 ratio를 전체 합으로 나누어 정규화.
 - tick은 opportunistic. allocation/free path에서 `now - last_tick > tick_sec`이면 호출
 
 ---
