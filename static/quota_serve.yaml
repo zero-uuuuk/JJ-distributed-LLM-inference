@@ -56,7 +56,11 @@ quota_serve:
   shadow_ttl_sec: 120
 
   # PR5 useful eviction ratio를 계산할 최근 cross-workload eviction 수다.
-  window_size: 1000
+  window_size: 10000
+
+  # Static quota 계산 기준 block 수다. PR5 probe에서 관측한
+  # total_blocks - running_blocks의 대표값(mean/median 근처)을 고정해 쓴다.
+  quota_base_blocks: 1600
 
   # workload별 quota_ratio.
   #
