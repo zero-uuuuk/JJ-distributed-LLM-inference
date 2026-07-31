@@ -89,7 +89,7 @@ chat0.1_agent0.9
 cd $VLLM_DIR
 source $VLLM_DIR/.venv/bin/activate
 
-VLLM_QUOTA_BASE_PROBE=1 \
+VLLM_SERVER_DEV_MODE=1 \
 QUOTA_SERVE_CONFIG=$JJ_ROOT/static/quota_serve.yaml \
 QUOTA_SERVE_MODE=static \
 VLLM_EVICTION_LOG=$JJ_ROOT/static/PR6/raw_result/pr6_eviction_chat0.1_agent0.9.jsonl \
