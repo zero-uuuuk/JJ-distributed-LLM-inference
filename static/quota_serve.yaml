@@ -85,7 +85,7 @@ quota_serve:
     # think-gap 이후 같은 prefix가 다시 필요해질 수 있으므로,
     # static quota에서 우선 보호 효과를 확인할 핵심 대상이다.
     chat:
-      quota_ratio: 0.30
+      quota_ratio: 0.55
 
     # RAG는 MS MARCO 기반 retrieval prompt workload다.
     # 현재 static 주요 검증은 Chat+Longctx / Chat+Agent가 중심이지만,
@@ -103,7 +103,7 @@ quota_serve:
     # tool-gap 이후 self-reuse도 있으므로, Chat 보호와 Agent self-reuse 보존의
     # 균형을 static sweep에서 함께 확인해야 한다.
     agent:
-      quota_ratio: 0.25
+      quota_ratio: 0.45
 
   # PR1에서 의도적으로 넣지 않는 값:
   #

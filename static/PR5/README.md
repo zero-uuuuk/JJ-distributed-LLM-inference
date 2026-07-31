@@ -241,3 +241,21 @@ grep '"type":"useful_eviction_signal"' \
 ```
 
 </details>
+
+## 10. PR5 결과
+
+Static은 `chat:agent = 0.55:0.45` quota ratio로 실행했다.
+
+![PR5 Chat+Agent off vs static](./pr5_chat_agent_off_vs_static.png)
+
+간단한 해석:
+
+```text
+(a) static에서 Chat/Agent hit rate mean이 모두 증가했다.
+(b) static에서 Chat/Agent SLO attainment가 모두 증가했다.
+(c) static에서 TTFT가 감소했다. 특히 p95/p99 tail에서 효과가 크게 보인다.
+    다만 Agent tool gap이 exponential이라 tail 개선폭은 실행 seed에 따라 달라질 수 있다.
+(d), (f) static에서 cross-workload useful eviction과 총 eviction 수가 감소했다.
+(e) static eviction 대부분은 over_quota_selected로 quota policy를 따랐고,
+    fallback LRU는 일부만 관측되었다.
+```
