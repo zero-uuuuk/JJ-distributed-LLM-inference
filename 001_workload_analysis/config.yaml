@@ -1,0 +1,40 @@
+# workload별 원본 처리 및 결과 개수
+workloads:
+  - type: chat
+    count: 1000
+    min_turns: 10
+    max_turns: 10
+
+  - type: rag
+    count: 1000
+
+  - type: agent
+    count: 1000
+    min_steps: 9  # tool request 9개와 최종 답변 1개로 session당 총 10개
+    max_steps: 9
+    max_prompt_chars: 24000 # 길이 제한
+
+# row 순서 샘플링 설정
+sampling:
+  random: true
+  seed: 42
+
+# Hugging Face tokenizer 설정
+tokenizer:
+  name: meta-llama/Llama-3.2-3B-Instruct
+
+# 단일 JSONL 출력 경로
+output: workloads/tokenized_workloads.jsonl
+
+# vLLM 측정 설정
+vllm:
+  url: http://127.0.0.1:8000/v1/chat/completions
+  model: meta-llama/Llama-3.2-3B-Instruct
+  max_tokens: 1
+  timeout_seconds: 1800
+  output_dir: raw_results
+  schedule:
+    type: poisson
+    qps: 5.0
+    seed: 42
+    max_concurrency: 32

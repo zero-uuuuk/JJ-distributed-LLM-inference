@@ -1,0 +1,15 @@
+# 비동기 HTTP client (OpenAI 호환 API 요청 및 스트리밍 처리)
+aiohttp==3.13.5
+
+# 데이터셋 로드 및 Hugging Face Hub 연동
+datasets==4.8.5
+huggingface-hub==1.14.0
+PyYAML>=6.0
+
+# tokenizer
+transformers==5.9.0
+Jinja2==3.1.6
+
+# 기존 benchmark 수치 계산 및 진행률 표시
+numpy==2.4.4
+tqdm==4.67.1
