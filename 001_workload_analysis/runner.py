@@ -1,12 +1,14 @@
 """워크로드를 준비하고 vLLM 측정을 실행하는 파이프라인 진입점."""
 
 import argparse
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from scripts.dataset import load_dataset, normalize_dataset
+from scripts.vllm_benchmark import run_vllm, save_results
 from scripts.tokenizer import (
     load_tokenized_workloads,
     save_tokenized_workloads,
@@ -39,10 +41,15 @@ def main() -> None:
         type=Path,
         default=Path(__file__).with_name("config.yaml"),
     )
+    parser.add_argument(
+        "--workload",
+        choices=("chat", "rag", "agent"),
+        required=True,
+    )
     args = parser.parse_args()
 
     # 설정 로드
-    print("[1/2] Loading config...")
+    print("[1/4] Loading config...")
     config_path = args.config.expanduser().resolve()
     config = load_config(config_path)
     output_path = config_path.parent / config.get(
@@ -50,7 +57,7 @@ def main() -> None:
     )
 
     # tokenized workload 준비
-    print("[2/2] Preparing tokenized workloads...")
+    print("[2/4] Preparing tokenized workloads...")
     if output_path.exists():
         print(f"[SKIP] output already exists: {output_path}")
         records = load_tokenized_workloads(output_path)
@@ -73,6 +80,13 @@ def main() -> None:
         print("       Saving tokenized workloads...")
         saved_path = save_tokenized_workloads(records, output_path)
         print(f"       saved: {saved_path}")
+
+    # 선택 workload의 vLLM 측정 실행 및 요청별 결과 저장
+    print(f"[3/4] Running vLLM: {args.workload}...")
+    results = asyncio.run(run_vllm(records, config, args.workload))
+    print("[4/4] Saving results...")
+    result_path = save_results(args.workload, results, config, config_path.parent)
+    print(f"       saved: {result_path}")
 
 
 if __name__ == "__main__":
