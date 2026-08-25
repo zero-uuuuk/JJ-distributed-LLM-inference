@@ -36,5 +36,9 @@ vllm:
   schedule:
     type: poisson
     qps: 5.0
+    think_seconds:          # workload별 같은 세션의 다음 턴까지 간격
+      chat: 3.0             # 사용자가 답변을 읽고 다시 입력하기까지
+      rag: 0.0              # 세션당 1턴이라 미사용
+      agent: 1.0            # tool 실행 후 다음 step까지
     seed: 42
     max_concurrency: 32

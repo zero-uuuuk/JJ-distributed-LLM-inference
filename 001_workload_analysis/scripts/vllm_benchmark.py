@@ -118,11 +118,33 @@ async def run_vllm(
     vllm = config["vllm"]
     selected = [record for record in records if record["workload"] == workload]
 
-    # seed 기반 Poisson 도착 시간 생성
-    rng = random.Random(vllm["schedule"]["seed"])
-    schedule = [0.0]
-    for _ in range(1, len(selected)):
-        schedule.append(schedule[-1] + rng.expovariate(vllm["schedule"]["qps"]))
+    # 연속된 같은 group request의 세션 묶음
+    sessions: list[list[int]] = []
+    for index, record in enumerate(selected):
+        if index and record["group_id"] == selected[index - 1]["group_id"]:
+            sessions[-1].append(index)
+        else:
+            sessions.append([index])
+
+    # workload별 도착 설정과 turn 간격 로드
+    schedule_config = vllm["schedule"]
+    think_seconds = schedule_config["think_seconds"][workload]
+    rng = random.Random(schedule_config["seed"])
+
+    # 전체 request QPS를 세션 도착률로 변환
+    session_rate = schedule_config["qps"] * len(sessions) / len(selected)
+
+    # request별 예약 시각 초기화
+    schedule = [0.0] * len(selected)
+    session_start = 0.0
+
+    for session in sessions:
+        # 세션 내부 turn별 예약 시각 계산
+        for turn, index in enumerate(session):
+            schedule[index] = session_start + turn * think_seconds
+
+        # 다음 세션까지의 Poisson 도착 간격 샘플링
+        session_start += rng.expovariate(session_rate)
 
     # 실행 기준시각 및 HTTP 연결 수 상한 설정
     run_started = asyncio.get_running_loop().time()

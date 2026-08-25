@@ -150,7 +150,10 @@ def _normalize_rag(
             for key in ("answers", "wellFormedAnswers")
             for value in row.get(key) or []
         )
-        answer = next((value for value in candidates if value), "")
+        answer = next(
+            (value for value in candidates if value and value != "No Answer Present."),
+            "",
+        )
 
         # retrieved passage 정리
         passages = row.get("passages") or {}
@@ -212,6 +215,8 @@ def _normalize_agent(
     for row_index, row in enumerate(tqdm(rows, desc="normalize:agent")):
         # trajectory step 조회
         steps = json.loads(row["steps"])
+        if not steps:
+            continue
 
         # step별 message·tool index 정리
         step_records: list[tuple[str, list[dict[str, str]]]] = []
@@ -255,7 +260,7 @@ def _normalize_agent(
             step_records.append((text, messages))
 
         # tool step·trajectory 필터
-        if not min_steps <= len(indices) <= max_steps:
+        if not indices or not min_steps <= len(indices) <= max_steps:
             continue
 
         # 마지막 tool 이후 final response 확인
@@ -285,9 +290,6 @@ def _normalize_agent(
             ]
             for _, previous in step_records[:source_index]:
                 messages += previous
-
-            if messages[-1]["role"] != "user":
-                messages.append({"role": "user", "content": "Continue"})
 
             # prompt 길이 필터
             if sum(len(message["content"]) for message in messages) > max_prompt_chars:

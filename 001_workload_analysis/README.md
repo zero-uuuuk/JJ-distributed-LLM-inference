@@ -82,6 +82,10 @@ vllm:
   schedule:
     type: poisson                            # 요청 도착 분포
     qps: 5.0                                 # 평균 초당 요청 수
+    think_seconds:                           # 같은 세션의 다음 turn까지 간격
+      chat: 3.0                              # 사용자 재입력 간격
+      rag: 0.0                               # 세션당 1개 request
+      agent: 1.0                             # 다음 tool-use step 간격
     seed: 42                                 # arrival 재현용 seed
     max_concurrency: 32                      # 동시 요청 상한
 ```
