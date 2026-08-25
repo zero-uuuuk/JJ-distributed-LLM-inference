@@ -9,6 +9,7 @@ import yaml
 
 from scripts.dataset import load_dataset, normalize_dataset
 from scripts.vllm_benchmark import run_vllm, save_results
+from scripts.summary import save_summary, summarize_results
 from scripts.tokenizer import (
     load_tokenized_workloads,
     save_tokenized_workloads,
@@ -49,7 +50,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # 설정 로드
-    print("[1/4] Loading config...")
+    print("[1/6] Loading config...")
     config_path = args.config.expanduser().resolve()
     config = load_config(config_path)
     output_path = config_path.parent / config.get(
@@ -57,7 +58,7 @@ def main() -> None:
     )
 
     # tokenized workload 준비
-    print("[2/4] Preparing tokenized workloads...")
+    print("[2/6] Preparing tokenized workloads...")
     if output_path.exists():
         print(f"[SKIP] output already exists: {output_path}")
         records = load_tokenized_workloads(output_path)
@@ -82,11 +83,20 @@ def main() -> None:
         print(f"       saved: {saved_path}")
 
     # 선택 workload의 vLLM 측정 실행 및 요청별 결과 저장
-    print(f"[3/4] Running vLLM: {args.workload}...")
+    print(f"[3/6] Running vLLM: {args.workload}...")
     results = asyncio.run(run_vllm(records, config, args.workload))
-    print("[4/4] Saving results...")
+    print("[4/6] Saving results...")
     result_path = save_results(args.workload, results, config, config_path.parent)
     print(f"       saved: {result_path}")
+
+    # vLLM 결과 summary 집계 및 저장
+    print("[5/6] Building summary...")
+    summary = summarize_results(args.workload, results, config["vllm"]["schedule"])
+    summary_path = save_summary(args.workload, summary, config, config_path.parent)
+    print(f"       saved: {summary_path}")
+
+    # 전체 DAG 완료
+    print("[6/6] Done.")
 
 
 if __name__ == "__main__":
