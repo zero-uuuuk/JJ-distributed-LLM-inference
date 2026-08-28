@@ -1,0 +1,33 @@
+# QuotaServe config — workload-aware prefix cache quota
+# QUOTASERVE_STATIC_PLAN.md §5.1
+#
+# 사용:
+#   QUOTA_SERVE_CONFIG=/path/to/quota_serve.yaml \
+#   QUOTA_SERVE_MODE=static \           # (선택) 아래 mode를 override
+#   QUOTA_SERVE_LOG=/path/quota.jsonl \ # (선택) quota/eviction 로그 경로
+#   vllm serve ...
+#
+# 이 파일이 없거나 mode=off면 baseline LRU와 동일하게 동작한다(§5.3 parity).
+
+quota_serve:
+  enabled: true
+  mode: "off"          # off | static | dynamic
+  tick_sec: 30         # dynamic feedback 주기 (PR 6/7). static 미사용.
+  shadow_ttl_sec: 120  # PR 5 shadow cache 항목 TTL (§9.1)
+
+  # workload별 고정 quota 비율. 기준 = quota_base_blocks (초기 구현: 전체 KV cache
+  # block 수, §8.2). quota_w = quota_ratio × quota_base_blocks.
+  #
+  # !!! NOTE !!!
+  #   quota_ratio 초기값은 Case 1 Chat-only 정상 상태 cached occupancy 비율을
+  #   참고해 잡는다(§5.1 WARNING). 아래는 placeholder이며, §12 static sweep으로
+  #   값을 바꿔가며 useful eviction ratio를 관찰한다.
+  workloads:
+    chat:                 # victim (multi-turn, delayed reuse) — 보호 대상
+      quota_ratio: 0.30
+    rag:                  # antagonist (low-reuse)
+      quota_ratio: 0.08
+    longctx:              # cold antagonist (prefill-heavy, low-reuse)
+      quota_ratio: 0.10
+    agent:                # warm antagonist (delayed self-reuse)
+      quota_ratio: 0.25
