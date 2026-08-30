@@ -12,15 +12,21 @@
 
 최근 LLM serving 환경에서는 하나의 모델이 Chat, Agent, RAG처럼 성격이 다른 workload를 동시에 처리한다. 이 workload들은 system prompt, 대화 이력, agent workflow template, retrieval document처럼 반복되는 prefix를 포함한다. 해당 prefix의 KV Cache를 재사용하면 prefill 연산을 생략할 수 있으므로, prefix caching은 TTFT와 inference cost를 줄이는 핵심 기법이다.
 
-실제 LLM traffic은 서로 다른 task category로 구성되며, 그 구성은 시간에 따라 변한다. Figure 1은 OpenRouter에서 관찰한 OpenAI 모델 traffic이 programming, technology, roleplay, science, finance, health 등 여러 category에 걸쳐 있음을 보인다. 또한 Figure 2는 동일한 Gemini 2.5 Flash 모델로 traffic을 보내는 public application에 document extraction과 tool-using agent가 함께 포함됨을 보인다. 이 자료들은 heterogeneous workload가 범용 LLM serving의 현실적인 입력이라는 근거를 제공한다.
+동일한 serving 조건에서도 workload별 request 구조와 prefix reuse 특성은 다르다. Figure 1(a)에서 Chat과 Agent는 turn 또는 tool step이 누적되면서 input-token 분포가 넓어져 p50/p95가 각각 `582/1,681`, `772/1,888` tokens로 나타난다. 반면 단일 query와 retrieval document로 구성된 RAG는 `793/1,048` tokens로 상대적으로 좁은 분포를 보인다. Figure 1(b)의 request별 mean cache hit rate는 Agent `75.8%`, Chat `70.7%`, RAG `10.1%`이다. 즉 Chat과 Agent는 이전 turn·step의 prefix를 반복적으로 재사용하지만, RAG는 request마다 retrieval context가 달라 공통 prefix 외의 재사용이 제한적이다.
 
-![Figure 1. OpenAI 모델 traffic의 category 구성 변화.](figures/001_openai_category_mix.png)
+![Figure 1. Workload별 input-token 분포와 mean prefix-cache hit rate.](figures/001_workload_characteristics.png)
 
-*Figure 1. OpenAI 모델 traffic의 category 구성 변화 [1].*
+*Figure 1. 동일한 vLLM 설정에서 측정한 Chat, RAG, Agent의 input-token 분포와 mean prefix-cache hit rate. Input-token 분포는 workload별 성공 요청 1,000건을 사용하며, cache hit rate는 vLLM이 prompt-token details를 반환한 999건의 평균이다. Violin은 전체 분포, 내부 box는 중앙값과 IQR, whisker는 p5-p95를 나타낸다.*
 
-![Figure 2. Gemini 2.5 Flash에 traffic을 보내는 public application.](figures/002_gemini_apps.png)
+실제 LLM traffic은 서로 다른 task category로 구성되며, 그 구성은 시간에 따라 변한다. Figure 2는 OpenRouter에서 관찰한 OpenAI 모델 traffic이 programming, technology, roleplay, science, finance, health 등 여러 category에 걸쳐 있음을 보인다. 또한 Figure 3은 동일한 Gemini 2.5 Flash 모델로 traffic을 보내는 public application에 document extraction과 tool-using agent가 함께 포함됨을 보인다. 이 자료들은 heterogeneous workload가 범용 LLM serving의 현실적인 입력이라는 근거를 제공한다.
 
-*Figure 2. Gemini 2.5 Flash에 traffic을 보내는 public application [2].*
+![Figure 2. OpenAI 모델 traffic의 category 구성 변화.](figures/002_openai_category_mix.png)
+
+*Figure 2. OpenAI 모델 traffic의 category 구성 변화 [1].*
+
+![Figure 3. Gemini 2.5 Flash에 traffic을 보내는 public application.](figures/003_gemini_apps.png)
+
+*Figure 3. Gemini 2.5 Flash에 traffic을 보내는 public application [2].*
 
 ### 1.2 Motivation
 
