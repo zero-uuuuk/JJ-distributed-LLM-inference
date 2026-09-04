@@ -53,7 +53,7 @@ QuotaServe의 목표는 각 애플리케이션이 단독 실행에서 얻는 pre
 
 QuotaServe는 global LRU를 대체하지 않고, 그 앞단에 애플리케이션 단위의 victim selection을 추가한다. Soft quota는 cache occupancy의 hard limit으로 동작하지 않으므로, cache pressure가 없는 동안에는 애플리케이션이 quota를 초과해 유휴 capacity를 사용할 수 있다.
 
-새로운 allocation으로 eviction이 필요해지면 quota 초과율이 가장 큰 애플리케이션을 먼저 선택하고, 해당 애플리케이션의 local-LRU head에서 victim block을 가져온다. 이 borrowing 방식은 cache를 정적으로 분할하지 않으면서 애플리케이션 내부의 기존 recency 정보를 유지하고 재사용 가능한 prefix를 보호한다.
+새로운 allocation으로 eviction이 필요해지면 quota 초과율이 가장 큰 애플리케이션부터 초과 점유분을 회수하고, 해당 애플리케이션의 local-LRU head에서 실제 victim block을 선택한다. 이러한 soft-quota 기반 회수 방식은 cache를 정적으로 분할하지 않으면서도 애플리케이션 내부의 recency 정보를 유지해 재사용 가능한 prefix를 보호한다.
 
 본 연구의 기여는 다음과 같다.
 
